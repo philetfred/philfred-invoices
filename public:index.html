@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Phil & Fred — Facturation</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.44.0/tabler-icons.min.css">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f5; min-height: 100vh; }
+  .header { background: #1a1a1a; color: white; padding: 16px 24px; display: flex; align-items: center; gap: 16px; }
+  .logo-text { font-size: 22px; font-weight: 500; color: white; }
+  .logo-text span { color: #e63946; }
+  .sub { font-size: 11px; color: #888; letter-spacing: 2px; text-transform: uppercase; }
+  .tag { display: inline-block; font-size: 11px; padding: 3px 10px; border-radius: 20px; background: #333; color: #aaa; margin-left: auto; }
+  .tag.connected { background: #14532d; color: #4ade80; }
+  .container { max-width: 800px; margin: 32px auto; padding: 0 16px; }
+  .card { background: white; border-radius: 12px; border: 1px solid #e5e5e5; padding: 24px; margin-bottom: 20px; }
+  .section-title { font-size: 11px; font-weight: 500; color: #888; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+  .section-title::after { content: ''; flex: 1; height: 1px; background: #f0f0f0; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+  .field label { font-size: 12px; color: #666; }
+  .field input, .field select, .field textarea { padding: 10px 12px; border-radius: 8px; border: 1px solid #e5e5e5; font-size: 14px; background: #fafafa; color: #1a1a1a; width: 100%; transition: border-color 0.2s; }
+  .field input:focus, .field select:focus { outline: none; border-color: #e63946; background: white; }
+  .btn-red { background: #e63946; color: white; border: none; padding: 12px 20px; border-radius: 8px; font-size: 14px; font-weight: 500; cursor: pointer; width: 100%; transition: background 0.2s; }
+  .btn-red:hover { background: #c1121f; }
+  .btn-red:disabled { background: #ccc; cursor: not-allowed; }
+  .btn-dark { background: #1a1a1a; color: white; border: none; padding: 10px 16px; border-radius: 8px; font-size: 14px; cursor: pointer; white-space: nowrap; transition: background 0.2s; }
+  .btn-dark:hover { background: #333; }
+  .status { padding: 10px 14px; border-radius: 8px; font-size: 13px; margin-top: 8px; display: none; }
+  .status.success { background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; display: block; }
+  .status.error { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; display: block; }
+  .status.loading { background: #f9fafb; color: #666; border: 1px solid #e5e5e5; display: block; }
+  .invoice-section { display: none; }
+  .invoice-section.visible { display: block; }
+  .search-row { display: flex; gap: 8px; }
+  .search-row input { flex: 1; padding: 10px 12px; border-radius: 8px; border: 1px solid #e5e5e5; font-size: 14px; background: #fafafa; }
+  .client-result { background: #fafafa; border: 1px solid #e5e5e5; border-radius: 8px; padding: 12px 16px; margin-top: 8px; cursor: pointer; transition: border-color 0.2s; }
+  .client-result:hover { border-color: #e63946; }
+  .client-result.selected { border-color: #e63946; background: #fff5f5; }
+  .client-name { font-size: 15px; font-weight: 500; color: #1a1a1a; }
+  .client-email { font-size: 13px; color: #888; }
+  .items-header { display: grid; grid-template-columns: 2fr 80px 110px 40px; gap: 8px; padding-bottom: 8px; border-bottom: 1px solid #f0f0f0; margin-bottom: 8px; }
+  .items-header span { font-size: 12px; color: #888; }
+  .item-row { display: grid; grid-template-columns: 2fr 80px 110px 40px; gap: 8px; align-items: center; margin-bottom: 8px; }
+  .item-row select, .item-row input { padding: 8px 10px; border-radius: 8px; border: 1px solid #e5e5e5; font-size: 13px; background: #fafafa; width: 100%; }
+  .remove-btn { background: none; border: none; color: #ccc; cursor: pointer; padding: 6px; border-radius: 6px; font-size: 20px; line-height: 1; }
+  .remove-btn:hover { color: #e63946; background: #fff5f5; }
+  .add-item-btn { background: none; border: 1px dashed #e5e5e5; color: #888; padding: 8px 16px; border-radius: 8px; cursor: pointer; font-size: 13px; width: 100%; margin-top: 4px; transition: all 0.2s; }
+  .add-item-btn:hover { border-color: #e63946; color: #e63946; }
+  .totals { background: #fafafa; border-radius: 8px; padding: 16px; margin-top: 16px; }
+  .total-row { display: flex; justify-content: space-between; font-size: 14px; padding: 4px 0; color: #666; }
+  .total-row.grand { font-size: 18px; font-weight: 600; color: #1a1a1a; border-top: 1px solid #e5e5e5; margin-top: 8px; padding-top: 12px; }
+  .success-banner { background: #1a1a1a; color: white; border-radius: 12px; padding: 24px; text-align: center; margin-top: 16px; display: none; }
+  .success-banner.visible { display: block; }
+  .success-banner .icon { font-size: 40px; color: #4ade80; margin-bottom: 8px; }
+  .success-banner h3 { font-size: 18px; font-weight: 500; margin-bottom: 8px; }
+  .success-banner p { font-size: 14px; color: #aaa; }
+  .success-banner a { color: #e63946; text-decoration: none; }
+  .note { font-size: 12px; color: #888; margin-top: 12px; line-height: 1.6; }
+  .note a { color: #e63946; }
+  @media (max-width: 600px) {
+    .grid2 { grid-template-columns: 1fr; }
+    .items-header, .item-row { grid-template-columns: 1fr 60px 90px 30px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <div class="logo-text">Phil <span>&</span> Fred</div>
+    <div class="sub">Pizzeria · Facturation</div>
+  </div>
+  <span class="tag" id="conn-tag">Non connecté</span>
+</div>
+
+<div class="container">
+
+  <div class="card" id="config-card">
+    <div class="section-title">Configuration QuickBooks</div>
+    <div class="grid2">
+      <div class="field">
+        <label>Client ID</label>
+        <input type="text" id="client-id" placeholder="Ton Client ID Intuit" />
+      </div>
+      <div class="field">
+        <label>Client Secret</label>
+        <input type="password" id="client-secret" placeholder="Ton Client Secret" />
+      </div>
+    </div>
+    <div class="field">
+      <label>Realm ID (Company ID)</label>
+      <input type="text" id="realm-id" placeholder="ex: 4620816365285048610" />
+    </div>
+    <div class="field">
+      <label>Access Token</label>
+      <input type="password" id="access-token" placeholder="Colle ton Bearer token ici" />
+    </div>
+    <div class="field">
+      <label>Refresh Token</label>
+      <input type="text" id="refresh-token" placeholder="Colle ton Refresh Token ici" />
+    </div>
+    <button class="btn-red" onclick="connectQB()">
+      <i class="ti ti-plug"></i> Connecter QuickBooks
+    </button>
+    <div class="status" id="conn-msg"></div>
+    <p class="note">⚠️ Ton Access Token expire après 1 heure. L'app utilisera automatiquement le Refresh Token pour en générer un nouveau.</p>
+  </div>
+
+  <div class="invoice-section" id="invoice-section">
+
+    <div class="card">
+      <div class="section-title">Client</div>
+      <div class="search-row">
+        <input type="text" id="client-search" placeholder="Chercher un client par nom..." onkeydown="if(event.key==='Enter') searchClient()" />
+        <button class="btn-dark" onclick="searchClient()">
+          <i class="ti ti-search"></i> Chercher
+        </button>
+      </div>
+      <div id="client-results"></div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">Items de la commande</div>
+      <div class="items-header">
+        <span>Produit</span>
+        <span>Qté</span>
+        <span>Prix unit.</span>
+        <span></span>
+      </div>
+      <div id="items-list"></div>
+      <button class="add-item-btn" onclick="addItem()">
+        <i class="ti ti-plus"></i> Ajouter un item
+      </button>
+
+      <div class="totals">
+        <div class="total-row"><span>Sous-total</span><span id="subtotal">0,00 $</span></div>
+        <div class="total-row"><span>TPS (5%)</span><span id="tps">0,00 $</span></div>
+        <div class="total-row"><span>TVQ (9.975%)</span><span id="tvq">0,00 $</span></div>
+        <div class="total-row grand"><span>Total</span><span id="grand-total">0,00 $</span></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">Détails</div>
+      <div class="grid2">
+        <div class="field">
+          <label>Date d'échéance</label>
+          <input type="date" id="due-date" />
+        </div>
+        <div class="field">
+          <label>Numéro de référence (optionnel)</label>
+          <input type="text" id="ref-num" placeholder="ex: CMD-2026-001" />
+        </div>
+      </div>
+      <div class="field">
+        <label>Note sur la facture</label>
+        <textarea id="note" rows="2" placeholder="ex: Merci pour votre commande !" style="resize:vertical;"></textarea>
+      </div>
+    </div>
+
+    <button class="btn-red" onclick="createInvoice()" id="create-btn" style="padding:16px; font-size:16px;">
+      <i class="ti ti-file-invoice"></i> Créer la facture dans QuickBooks
+    </button>
+
+    <div class="success-banner" id="success-banner">
+      <div class="icon"><i class="ti ti-circle-check"></i></div>
+      <h3>Facture créée avec succès !</h3>
+      <p>La facture apparaît maintenant dans ton QuickBooks.<br>
+      <a href="#" id="qb-link" target="_blank">Voir dans QuickBooks →</a></p>
+    </div>
+
+  </div>
+</div>
+
+<script>
+let config = {};
+let selectedClient = null;
+let qbProducts = [];
+let itemCount = 0;
+
+async function qbCall(endpoint, method, body) {
+  const res = await fetch('/api/qb', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      endpoint,
+      method: method || 'GET',
+      accessToken: config.accessToken,
+      realmId: config.realmId,
+      body
+    })
+  });
+  return res.json();
+}
+
+async function refreshAccessToken() {
+  const res = await fetch('/api/refresh', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      refreshToken: config.refreshToken,
+      clientId: config.clientId,
+      clientSecret: config.clientSecret
+    })
+  });
+  const data = await res.json();
+  if (data.access_token) {
+    config.accessToken = data.access_token;
+    document.getElementById('access-token').value = data.access_token;
+    return true;
+  }
+  return false;
+}
+
+async function connectQB() {
+  config = {
+    clientId: document.getElementById('client-id').value.trim(),
+    clientSecret: document.getElementById('client-secret').value.trim(),
+    realmId: document.getElementById('realm-id').value.trim(),
+    accessToken: document.getElementById('access-token').value.trim(),
+    refreshToken: document.getElementById('refresh-token').value.trim()
+  };
+
+  if (!config.clientId || !config.clientSecret || !config.realmId || !config.accessToken) {
+    showMsg('conn-msg', 'error', 'Remplis tous les champs obligatoires.');
+    return;
+  }
+
+  showMsg('conn-msg', 'loading', 'Connexion en cours...');
+
+  try {
+    const data = await qbCall('query?query=SELECT * FROM Item WHERE Active=true MAXRESULTS 200');
+    if (data.QueryResponse) {
+      qbProducts = (data.QueryResponse.Item || []).filter(i => ['Service','Inventory','NonInventory'].includes(i.Type));
+      showMsg('conn-msg', 'success', '✓ Connecté — ' + qbProducts.length + ' produits chargés');
+      document.getElementById('conn-tag').textContent = '✓ Connecté';
+      document.getElementById('conn-tag').className = 'tag connected';
+      document.getElementById('invoice-section').classList.add('visible');
+      addItem();
+      const due = new Date();
+      due.setDate(due.getDate() + 30);
+      document.getElementById('due-date').value = due.toISOString().split('T')[0];
+    } else if (data.fault) {
+      if (config.refreshToken) {
+        showMsg('conn-msg', 'loading', 'Token expiré — rafraîchissement...');
+        const ok = await refreshAccessToken();
+        if (ok) { connectQB(); return; }
+      }
+      showMsg('conn-msg', 'error', 'Erreur : ' + JSON.stringify(data.fault));
+    }
+  } catch(e) {
+    showMsg('conn-msg', 'error', 'Erreur de connexion : ' + e.message);
+  }
+}
+
+async function searchClient() {
+  const q = document.getElementById('client-search').value.trim();
+  if (!q) return;
+  const div = document.getElementById('client-results');
+  div.innerHTML = '<div style="padding:8px;font-size:13px;color:#888;">Recherche...</div>';
+  try {
+    const data = await qbCall(`query?query=SELECT * FROM Customer WHERE DisplayName LIKE '%25${encodeURIComponent(q)}%25' MAXRESULTS 8`);
+    const customers = data.QueryResponse?.Customer || [];
+    if (!customers.length) { div.innerHTML = '<div style="padding:8px;font-size:13px;color:#888;">Aucun client trouvé.</div>'; return; }
+    div.innerHTML = customers.map(c => `
+      <div class="client-result" id="cr-${c.Id}" onclick="selectClient('${c.Id}','${escape(c.DisplayName||'')}','${escape(c.PrimaryEmailAddr?.Address||'')}')">
+        <div class="client-name">${c.DisplayName||''}</div>
+        <div class="client-email">${c.PrimaryEmailAddr?.Address||'Pas de courriel'}</div>
+      </div>`).join('');
+  } catch(e) {
+    div.innerHTML = '<div style="padding:8px;font-size:13px;color:#dc2626;">Erreur de recherche.</div>';
+  }
+}
+
+function selectClient(id, name, email) {
+  selectedClient = { id, name: unescape(name), email: unescape(email) };
+  document.querySelectorAll('.client-result').forEach(el => el.classList.remove('selected'));
+  const el = document.getElementById('cr-' + id);
+  if (el) el.classList.add('selected');
+}
+
+function addItem() {
+  itemCount++;
+  const id = 'item-' + itemCount;
+  const div = document.createElement('div');
+  div.className = 'item-row';
+  div.id = id;
+  div.innerHTML = `
+    <select class="product-select" onchange="onProductChange(this,'${id}')">
+      <option value="">— Choisir un produit —</option>
+      ${qbProducts.map(p => `<option value="${p.Id}" data-price="${p.UnitPrice||0}">${p.Name}</option>`).join('')}
+    </select>
+    <input type="number" class="qty-input" value="1" min="1" onchange="recalc()" />
+    <input type="number" class="price-input" value="0.00" step="0.01" onchange="recalc()" />
+    <button class="remove-btn" onclick="removeItem('${id}')" aria-label="Supprimer">×</button>`;
+  document.getElementById('items-list').appendChild(div);
+  recalc();
+}
+
+function onProductChange(sel, rowId) {
+  const price = parseFloat(sel.options[sel.selectedIndex].getAttribute('data-price')) || 0;
+  document.getElementById(rowId).querySelector('.price-input').value = price.toFixed(2);
+  recalc();
+}
+
+function removeItem(id) {
+  const el = document.getElementById(id);
+  if (el) el.remove();
+  recalc();
+}
+
+function recalc() {
+  let sub = 0;
+  document.querySelectorAll('.item-row').forEach(row => {
+    sub += (parseFloat(row.querySelector('.qty-input')?.value)||0) * (parseFloat(row.querySelector('.price-input')?.value)||0);
+  });
+  const tps = sub * 0.05;
+  const tvq = sub * 0.09975;
+  document.getElementById('subtotal').textContent = fmt(sub);
+  document.getElementById('tps').textContent = fmt(tps);
+  document.getElementById('tvq').textContent = fmt(tvq);
+  document.getElementById('grand-total').textContent = fmt(sub + tps + tvq);
+}
+
+function fmt(n) { return n.toLocaleString('fr-CA', { style:'currency', currency:'CAD' }); }
+
+async function createInvoice() {
+  if (!selectedClient) { alert('Sélectionne un client d\'abord.'); return; }
+  const lines = [];
+  let valid = true;
+  document.querySelectorAll('.item-row').forEach(row => {
+    const sel = row.querySelector('.product-select');
+    const qty = parseFloat(row.querySelector('.qty-input')?.value)||0;
+    const price = parseFloat(row.querySelector('.price-input')?.value)||0;
+    if (!sel?.value || qty <= 0) { valid = false; return; }
+    lines.push({ Amount: parseFloat((qty*price).toFixed(2)), DetailType:'SalesItemLineDetail', SalesItemLineDetail:{ ItemRef:{value:sel.value}, Qty:qty, UnitPrice:price }});
+  });
+  if (!valid || !lines.length) { alert('Ajoute au moins un produit valide.'); return; }
+
+  const btn = document.getElementById('create-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<i class="ti ti-loader"></i> Création en cours...';
+
+  const payload = {
+    CustomerRef: { value: selectedClient.id },
+    Line: lines,
+    DueDate: document.getElementById('due-date').value || undefined,
+    DocNumber: document.getElementById('ref-num').value || undefined,
+    CustomerMemo: document.getElementById('note').value ? { value: document.getElementById('note').value } : undefined
+  };
+
+  try {
+    const data = await qbCall('invoice', 'POST', payload);
+    if (data.Invoice) {
+      document.getElementById('success-banner').classList.add('visible');
+      document.getElementById('qb-link').href = `https://app.qbo.intuit.com/app/invoice?txnId=${data.Invoice.Id}`;
+      btn.innerHTML = '<i class="ti ti-circle-check"></i> Facture créée !';
+      btn.style.background = '#15803d';
+    } else {
+      throw new Error(JSON.stringify(data));
+    }
+  } catch(e) {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="ti ti-file-invoice"></i> Créer la facture dans QuickBooks';
+    alert('Erreur : ' + e.message);
+  }
+}
+
+function showMsg(id, type, msg) {
+  const el = document.getElementById(id);
+  el.className = 'status ' + type;
+  el.textContent = msg;
+}
+</script>
+</body>
+</html>
