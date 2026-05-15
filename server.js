@@ -112,6 +112,30 @@ app.get('/api/taxcodes', async (req, res) => {
   }
 });
 
+// Get next invoice number
+app.get('/api/next-invoice-number', async (req, res) => {
+  try {
+    const token = await getValidToken();
+    const url = `https://quickbooks.api.intuit.com/v3/company/${tokenStore.realmId}/query?query=SELECT DocNumber FROM Invoice ORDERBY DocNumber DESC MAXRESULTS 1&minorversion=65`;
+    const response = await fetch(url, {
+      headers: {
+        'Authorization': 'Bearer ' + token,
+        'Accept': 'application/json'
+      }
+    });
+    const data = await response.json();
+    const invoices = data.QueryResponse?.Invoice || [];
+    let nextNum = 1001;
+    if (invoices.length > 0 && invoices[0].DocNumber) {
+      const lastNum = parseInt(invoices[0].DocNumber.replace(/\D/g, ''));
+      if (!isNaN(lastNum)) nextNum = lastNum + 1;
+    }
+    res.json({ nextNumber: String(nextNum) });
+  } catch (err) {
+    res.status(401).json({ error: err.message });
+  }
+});
+
 // ─── Status ───────────────────────────────────────────────────────────────────
 
 app.get('/api/status', (req, res) => {
