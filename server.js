@@ -25,7 +25,7 @@ let tokenStore = {
 app.get('/auth', (req, res) => {
   const scope = 'com.intuit.quickbooks.accounting';
   const state = Math.random().toString(36).substring(7);
-  const authUrl = `https://appcenter.intuit.com/connect/oauth2?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=code&scope=${scope}&state=${state}`;
+  const authUrl = `https://appcenter.intuit.com/connect/oauth2?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=code&scope=${scope}&state=${state}&prompt=select_account`;
   res.redirect(authUrl);
 });
 
