@@ -42,9 +42,9 @@
   .client-result.selected { border-color: #e63946; background: #fff5f5; }
   .client-name { font-size: 15px; font-weight: 500; color: #1a1a1a; }
   .client-email { font-size: 13px; color: #888; }
-  .items-header { display: grid; grid-template-columns: 2fr 80px 110px 40px; gap: 8px; padding-bottom: 8px; border-bottom: 1px solid #f0f0f0; margin-bottom: 8px; }
+  .items-header { display: grid; grid-template-columns: 2fr 70px 100px 120px 40px; gap: 8px; padding-bottom: 8px; border-bottom: 1px solid #f0f0f0; margin-bottom: 8px; }
   .items-header span { font-size: 12px; color: #888; }
-  .item-row { display: grid; grid-template-columns: 2fr 80px 110px 40px; gap: 8px; align-items: center; margin-bottom: 8px; }
+  .item-row { display: grid; grid-template-columns: 2fr 70px 100px 120px 40px; gap: 8px; align-items: center; margin-bottom: 8px; }
   .item-row select, .item-row input { padding: 8px 10px; border-radius: 8px; border: 1px solid #e5e5e5; font-size: 13px; background: #fafafa; width: 100%; }
   .remove-btn { background: none; border: none; color: #ccc; cursor: pointer; padding: 6px; border-radius: 6px; font-size: 20px; line-height: 1; }
   .remove-btn:hover { color: #e63946; }
@@ -101,7 +101,7 @@
     <div class="card">
       <div class="section-title">Items de la commande</div>
       <div class="items-header">
-        <span>Produit</span><span>Qté</span><span>Prix unit.</span><span></span>
+        <span>Produit</span><span>Qté</span><span>Prix unit.</span><span>Taxe</span><span></span>
       </div>
       <div id="items-list"></div>
       <button class="add-item-btn" onclick="addItem()">
@@ -250,6 +250,14 @@ function addItem() {
     </select>
     <input type="number" class="qty-input" value="1" min="1" onchange="recalc()" />
     <input type="number" class="price-input" value="0.00" step="0.01" onchange="recalc()" />
+    <select class="tax-select" style="padding:8px 6px;border-radius:8px;border:1px solid #e5e5e5;font-size:12px;background:#fafafa;width:100%;">
+      <option value="NON">Exonéré</option>
+      <option value="TAX">TPS/TVQ (14.975%)</option>
+      <option value="GST">TPS (5%)</option>
+      <option value="PST">TVQ (9.975%)</option>
+      <option value="OUT_OF_SCOPE">Hors champ</option>
+      <option value="ZERO">Détaxé</option>
+    </select>
     <button class="remove-btn" onclick="removeItem('${id}')">×</button>`;
   document.getElementById('items-list').appendChild(div);
   recalc();
@@ -285,6 +293,7 @@ async function createInvoice() {
     const sel = row.querySelector('.product-select');
     const qty = parseFloat(row.querySelector('.qty-input')?.value)||0;
     const price = parseFloat(row.querySelector('.price-input')?.value)||0;
+    const taxCode = row.querySelector('.tax-select')?.value || 'NON';
     if (!sel?.value || qty <= 0) { valid = false; return; }
     lines.push({
       Amount: parseFloat((qty * price).toFixed(2)),
@@ -293,7 +302,7 @@ async function createInvoice() {
         ItemRef: { value: sel.value },
         Qty: qty,
         UnitPrice: price,
-        TaxCodeRef: { value: 'EXEMPT' }
+        TaxCodeRef: { value: taxCode }
       }
     });
   });
