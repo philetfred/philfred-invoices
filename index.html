@@ -117,12 +117,12 @@
       <div class="section-title">Détails</div>
       <div class="grid2">
         <div class="field">
-          <label>Date d'échéance</label>
-          <input type="date" id="due-date" />
+          <label>Date de la facture</label>
+          <input type="date" id="invoice-date" />
         </div>
         <div class="field">
-          <label>Référence (optionnel)</label>
-          <input type="text" id="ref-num" placeholder="ex: CMD-2026-001" />
+          <label>Date d'échéance</label>
+          <input type="date" id="due-date" />
         </div>
       </div>
       <div class="field">
@@ -178,6 +178,8 @@ function showInvoice() {
   document.getElementById('conn-tag').textContent = '✓ Connecté';
   document.getElementById('conn-tag').className = 'tag connected';
   document.getElementById('reconnect-btn').style.display = 'block';
+  const today = new Date();
+  document.getElementById('invoice-date').value = today.toISOString().split('T')[0];
   const due = new Date();
   due.setDate(due.getDate() + 30);
   document.getElementById('due-date').value = due.toISOString().split('T')[0];
@@ -238,11 +240,36 @@ async function searchClient() {
   }
 }
 
+function isLoblawsClient(name) {
+  const keywords = ['maxi', 'provigo', 'loblaws', 'intermarché', 'intermarche', 'metc'];
+  const lower = name.toLowerCase();
+  return keywords.some(k => lower.includes(k));
+}
+
+function filterProducts(clientName) {
+  if (isLoblawsClient(clientName)) {
+    return qbProducts.filter(p => p.Name && (
+      p.SubItem === true && p.ParentRef && p.ParentRef.name && p.ParentRef.name.toLowerCase().includes('loblaws')
+      || p.Name.toLowerCase().startsWith('lbw')
+      || (p.FullyQualifiedName && p.FullyQualifiedName.toLowerCase().includes('loblaws'))
+    ));
+  }
+  return qbProducts;
+}
+
 function selectClient(id, name, email) {
   selectedClient = { id, name: unescape(name), email: unescape(email) };
   document.querySelectorAll('.client-result').forEach(el => el.classList.remove('selected'));
   const el = document.getElementById('cr-' + id);
   if (el) el.classList.add('selected');
+  // Filter products based on client
+  const filtered = filterProducts(unescape(name));
+  document.querySelectorAll('.product-select').forEach(sel => {
+    const current = sel.value;
+    sel.innerHTML = '<option value="">— Choisir un produit —</option>' +
+      filtered.map(p => `<option value="${p.Id}" data-price="${p.UnitPrice||0}">${p.Name}</option>`).join('');
+    if (current) sel.value = current;
+  });
 }
 
 function addItem() {
@@ -254,7 +281,7 @@ function addItem() {
   div.innerHTML = `
     <select class="product-select" onchange="onProductChange(this,'${id}')">
       <option value="">— Choisir un produit —</option>
-      ${qbProducts.map(p => `<option value="${p.Id}" data-price="${p.UnitPrice||0}">${p.Name}</option>`).join('')}
+      ${(selectedClient ? filterProducts(selectedClient.name) : qbProducts).map(p => `<option value="${p.Id}" data-price="${p.UnitPrice||0}">${p.Name}</option>`).join('')}
     </select>
     <input type="number" class="qty-input" value="1" min="1" onchange="recalc()" />
     <input type="number" class="price-input" value="0.00" step="0.01" onchange="recalc()" />
@@ -332,8 +359,8 @@ async function createInvoice() {
         body: {
           CustomerRef: { value: selectedClient.id },
           Line: lines,
+          TxnDate: document.getElementById('invoice-date').value || undefined,
           DueDate: document.getElementById('due-date').value || undefined,
-          DocNumber: document.getElementById('ref-num').value || undefined,
           CustomerMemo: document.getElementById('note').value ? { value: document.getElementById('note').value } : undefined
         }
       })
@@ -359,7 +386,7 @@ function resetForm() {
   document.getElementById('client-search').value = '';
   document.getElementById('client-results').innerHTML = '';
   document.getElementById('items-list').innerHTML = '';
-  document.getElementById('ref-num').value = '';
+  document.getElementById('invoice-date').value = new Date().toISOString().split('T')[0];
   document.getElementById('note').value = '';
   document.getElementById('success-banner').classList.remove('visible');
   const btn = document.getElementById('create-btn');
