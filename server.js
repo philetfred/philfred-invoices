@@ -8,20 +8,18 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname)));
 
+// GET requests to QuickBooks API
 app.post('/api/qb', async (req, res) => {
-  const { endpoint, method, accessToken, realmId, body } = req.body;
+  const { query, accessToken, realmId } = req.body;
   try {
-    const url = `https://quickbooks.api.intuit.com/v3/company/${realmId}/${endpoint}&minorversion=65`;
-    const options = {
-      method: method || 'GET',
+    const url = `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(query)}&minorversion=65`;
+    const response = await fetch(url, {
+      method: 'GET',
       headers: {
         'Authorization': 'Bearer ' + accessToken,
-        'Accept': 'application/json',
-        'Content-Type': 'application/json'
+        'Accept': 'application/json'
       }
-    };
-    if (body) options.body = JSON.stringify(body);
-    const response = await fetch(url, options);
+    });
     const data = await response.json();
     res.json(data);
   } catch (err) {
@@ -29,6 +27,7 @@ app.post('/api/qb', async (req, res) => {
   }
 });
 
+// POST requests to QuickBooks API (create invoice)
 app.post('/api/qb-post', async (req, res) => {
   const { endpoint, accessToken, realmId, body } = req.body;
   try {
@@ -49,6 +48,7 @@ app.post('/api/qb-post', async (req, res) => {
   }
 });
 
+// Refresh access token
 app.post('/api/refresh', async (req, res) => {
   const { refreshToken, clientId, clientSecret } = req.body;
   try {
@@ -60,7 +60,7 @@ app.post('/api/refresh', async (req, res) => {
         'Content-Type': 'application/x-www-form-urlencoded',
         'Accept': 'application/json'
       },
-      body: `grant_type=refresh_token&refresh_token=${refreshToken}`
+      body: `grant_type=refresh_token&refresh_token=${encodeURIComponent(refreshToken)}`
     });
     const data = await response.json();
     res.json(data);
