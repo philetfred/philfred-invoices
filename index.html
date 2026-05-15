@@ -259,7 +259,12 @@ function addItem() {
     <input type="number" class="qty-input" value="1" min="1" onchange="recalc()" />
     <input type="number" class="price-input" value="0.00" step="0.01" onchange="recalc()" />
     <select class="tax-select" style="padding:8px 6px;border-radius:8px;border:1px solid #e5e5e5;font-size:12px;background:#fafafa;width:100%;">
-      ${qbTaxCodes.map(t => `<option value="${t.Id}"${t.Name && t.Name.toLowerCase().includes('exon') ? ' selected' : ''}>${t.Name}</option>`).join('')}
+      <option value="3" selected>Exonéré</option>
+      <option value="8">TPS/TVQ QC (14.975%)</option>
+      <option value="5">TPS (5%)</option>
+      <option value="9">TVQ QC (9.975%)</option>
+      <option value="4">Détaxé</option>
+      <option value="2">Hors champ</option>
     </select>
     <button class="remove-btn" onclick="removeItem('${id}')">×</button>`;
   document.getElementById('items-list').appendChild(div);
