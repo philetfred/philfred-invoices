@@ -407,6 +407,11 @@ function resetForm() {
   itemCount = 0;
   addItem();
   recalc();
+  // Fetch next invoice number for new invoice
+  fetch('/api/next-invoice-number')
+    .then(r => r.json())
+    .then(d => { if (d.nextNumber) document.getElementById('ref-num').value = d.nextNumber; })
+    .catch(() => {});
 }
 
 checkStatus();
