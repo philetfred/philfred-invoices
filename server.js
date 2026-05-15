@@ -116,7 +116,8 @@ app.get('/api/taxcodes', async (req, res) => {
 app.get('/api/next-invoice-number', async (req, res) => {
   try {
     const token = await getValidToken();
-    const url = `https://quickbooks.api.intuit.com/v3/company/${tokenStore.realmId}/query?query=SELECT DocNumber FROM Invoice ORDERBY DocNumber DESC MAXRESULTS 1&minorversion=65`;
+    // Get last 10 invoices and find highest DocNumber
+    const url = `https://quickbooks.api.intuit.com/v3/company/${tokenStore.realmId}/query?query=SELECT DocNumber FROM Invoice ORDERBY MetaData.LastUpdatedTime DESC MAXRESULTS 50&minorversion=65`;
     const response = await fetch(url, {
       headers: {
         'Authorization': 'Bearer ' + token,
@@ -125,12 +126,14 @@ app.get('/api/next-invoice-number', async (req, res) => {
     });
     const data = await response.json();
     const invoices = data.QueryResponse?.Invoice || [];
-    let nextNum = 1001;
-    if (invoices.length > 0 && invoices[0].DocNumber) {
-      const lastNum = parseInt(invoices[0].DocNumber.replace(/\D/g, ''));
-      if (!isNaN(lastNum)) nextNum = lastNum + 1;
-    }
-    res.json({ nextNumber: String(nextNum) });
+    let maxNum = 0;
+    invoices.forEach(inv => {
+      if (inv.DocNumber) {
+        const num = parseInt(inv.DocNumber.replace(/[^0-9]/g, ''));
+        if (!isNaN(num) && num > maxNum) maxNum = num;
+      }
+    });
+    res.json({ nextNumber: String(maxNum + 1) });
   } catch (err) {
     res.status(401).json({ error: err.message });
   }
