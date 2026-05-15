@@ -112,27 +112,38 @@ app.get('/api/taxcodes', async (req, res) => {
   }
 });
 
-// Get next invoice number
+// Get next invoice number (checks Invoice AND CreditMemo)
 app.get('/api/next-invoice-number', async (req, res) => {
   try {
     const token = await getValidToken();
-    // Get last 10 invoices and find highest DocNumber
-    const url = `https://quickbooks.api.intuit.com/v3/company/${tokenStore.realmId}/query?query=SELECT DocNumber FROM Invoice ORDERBY MetaData.LastUpdatedTime DESC MAXRESULTS 50&minorversion=65`;
-    const response = await fetch(url, {
-      headers: {
-        'Authorization': 'Bearer ' + token,
-        'Accept': 'application/json'
-      }
-    });
-    const data = await response.json();
-    const invoices = data.QueryResponse?.Invoice || [];
+    const headers = {
+      'Authorization': 'Bearer ' + token,
+      'Accept': 'application/json'
+    };
+    const base = `https://quickbooks.api.intuit.com/v3/company/${tokenStore.realmId}`;
+    
+    // Fetch invoices and credit memos in parallel
+    const [invRes, cmRes] = await Promise.all([
+      fetch(`${base}/query?query=SELECT DocNumber FROM Invoice MAXRESULTS 100&minorversion=65`, { headers }),
+      fetch(`${base}/query?query=SELECT DocNumber FROM CreditMemo MAXRESULTS 100&minorversion=65`, { headers })
+    ]);
+    
+    const invData = await invRes.json();
+    const cmData = await cmRes.json();
+    
+    const allDocs = [
+      ...(invData.QueryResponse?.Invoice || []),
+      ...(cmData.QueryResponse?.CreditMemo || [])
+    ];
+    
     let maxNum = 0;
-    invoices.forEach(inv => {
-      if (inv.DocNumber) {
-        const num = parseInt(inv.DocNumber.replace(/[^0-9]/g, ''));
+    allDocs.forEach(doc => {
+      if (doc.DocNumber) {
+        const num = parseInt(doc.DocNumber.replace(/[^0-9]/g, ''));
         if (!isNaN(num) && num > maxNum) maxNum = num;
       }
     });
+    
     res.json({ nextNumber: String(maxNum + 1) });
   } catch (err) {
     res.status(401).json({ error: err.message });
