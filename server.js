@@ -93,6 +93,25 @@ async function getValidToken() {
   return tokenStore.accessToken;
 }
 
+// ─── Tax Codes ────────────────────────────────────────────────────────────────
+
+app.get('/api/taxcodes', async (req, res) => {
+  try {
+    const token = await getValidToken();
+    const url = `https://quickbooks.api.intuit.com/v3/company/${tokenStore.realmId}/query?query=SELECT * FROM TaxCode&minorversion=65`;
+    const response = await fetch(url, {
+      headers: {
+        'Authorization': 'Bearer ' + token,
+        'Accept': 'application/json'
+      }
+    });
+    const data = await response.json();
+    res.json(data);
+  } catch (err) {
+    res.status(401).json({ error: err.message });
+  }
+});
+
 // ─── Status ───────────────────────────────────────────────────────────────────
 
 app.get('/api/status', (req, res) => {
