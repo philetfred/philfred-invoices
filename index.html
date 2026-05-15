@@ -243,13 +243,15 @@ async function searchClient() {
     customers.forEach(c => {
       qbClients[c.Id] = {
         name: c.DisplayName || '',
-        parentName: c.ParentRef ? c.ParentRef.name : ''
+        parentName: c.ParentRef ? c.ParentRef.name : '',
+        email: c.PrimaryEmailAddr ? c.PrimaryEmailAddr.Address : '',
+        fullyQualifiedName: c.FullyQualifiedName || ''
       };
     });
     div.innerHTML = customers.map(c => `
       <div class="client-result" id="cr-${c.Id}" onclick="selectClient('${c.Id}','${escape(c.DisplayName||'')}','${escape(c.PrimaryEmailAddr?.Address||'')}')">
         <div class="client-name">${c.DisplayName||''}</div>
-        <div class="client-email">${c.PrimaryEmailAddr?.Address||'Pas de courriel'} ${c.ParentRef ? '<span style="font-size:11px;color:#e63946;">↳ '+c.ParentRef.name+'</span>' : ''}</div>
+        <div class="client-email">${c.PrimaryEmailAddr?.Address||'Pas de courriel'} ${c.ParentRef && c.ParentRef.name ? '<span style="font-size:11px;color:#e63946;">↳ '+c.ParentRef.name+'</span>' : ''}</div>
       </div>`).join('');
   } catch(e) {
     div.innerHTML = '<div style="padding:8px;font-size:13px;color:#dc2626;">Erreur — reconnecte QuickBooks.</div>';
@@ -263,12 +265,26 @@ function getClientCategory(customerId) {
   const client = qbClients[customerId];
   if (!client) return 'all';
   
-  // Check if this client or its parent is Loblaws Inc. or METRO Richelieu Inc.
-  const parentName = client.parentName ? client.parentName.toLowerCase() : '';
+  const fqn = (client.fullyQualifiedName || '').toLowerCase();
+  const parentName = (client.parentName || '').toLowerCase();
   const clientName = (client.name || '').toLowerCase();
+  const email = (client.email || '').toLowerCase();
   
-  if (parentName.includes('loblaws inc') || clientName.includes('loblaws inc')) return 'loblaws';
-  if (parentName.includes('metro richelieu') || clientName.includes('metro richelieu')) return 'metro';
+  // Check FullyQualifiedName first (most reliable - format: "Parent:Child")
+  if (fqn.startsWith('loblaws inc')) return 'loblaws';
+  if (fqn.startsWith('metro richelieu') || fqn.startsWith('métro richelieu')) return 'metro';
+  
+  // Check parent name
+  if (parentName.includes('loblaws inc')) return 'loblaws';
+  if (parentName.includes('metro richelieu') || parentName.includes('métro richelieu')) return 'metro';
+  
+  // Check email domain
+  if (email.includes('@loblaw.ca') || email.includes('@provigo.ca') || email.includes('@maxi.ca')) return 'loblaws';
+  
+  // Check client name keywords for direct Loblaws clients
+  const loblawsKeywords = ['maxi', 'provigo', 'loblaws inc', 'intermarché', 'intermarche', 'metc'];
+  if (loblawsKeywords.some(k => clientName.includes(k))) return 'loblaws';
+  
   return 'all';
 }
 
