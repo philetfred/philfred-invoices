@@ -184,15 +184,23 @@ function showInvoice() {
   if (document.getElementById('items-list').children.length === 0) addItem();
 }
 
+let qbTaxCodes = [];
+
 async function loadProducts() {
   try {
-    const res = await fetch('/api/qb', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query: 'SELECT * FROM Item WHERE Active=true MAXRESULTS 200' })
-    });
-    const data = await res.json();
-    qbProducts = (data.QueryResponse?.Item || []).filter(i => ['Service','Inventory','NonInventory'].includes(i.Type));
+    // Load products and tax codes in parallel
+    const [itemRes, taxRes] = await Promise.all([
+      fetch('/api/qb', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: 'SELECT * FROM Item WHERE Active=true MAXRESULTS 200' })
+      }),
+      fetch('/api/taxcodes')
+    ]);
+    const itemData = await itemRes.json();
+    const taxData = await taxRes.json();
+    qbProducts = (itemData.QueryResponse?.Item || []).filter(i => ['Service','Inventory','NonInventory'].includes(i.Type));
+    qbTaxCodes = taxData.QueryResponse?.TaxCode || [];
     updateAllSelects();
   } catch(e) { console.error('Failed to load products', e); }
 }
@@ -251,12 +259,7 @@ function addItem() {
     <input type="number" class="qty-input" value="1" min="1" onchange="recalc()" />
     <input type="number" class="price-input" value="0.00" step="0.01" onchange="recalc()" />
     <select class="tax-select" style="padding:8px 6px;border-radius:8px;border:1px solid #e5e5e5;font-size:12px;background:#fafafa;width:100%;">
-      <option value="NON">Exonéré</option>
-      <option value="TAX">TPS/TVQ (14.975%)</option>
-      <option value="GST">TPS (5%)</option>
-      <option value="PST">TVQ (9.975%)</option>
-      <option value="OUT_OF_SCOPE">Hors champ</option>
-      <option value="ZERO">Détaxé</option>
+      ${qbTaxCodes.map(t => `<option value="${t.Id}"${t.Name && t.Name.toLowerCase().includes('exon') ? ' selected' : ''}>${t.Name}</option>`).join('')}
     </select>
     <button class="remove-btn" onclick="removeItem('${id}')">×</button>`;
   document.getElementById('items-list').appendChild(div);
