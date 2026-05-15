@@ -126,6 +126,10 @@
         </div>
       </div>
       <div class="field">
+        <label>Numéro de facture</label>
+        <input type="text" id="ref-num" placeholder="ex: 1234" />
+      </div>
+      <div class="field">
         <label>Note sur la facture</label>
         <textarea id="note" rows="2" placeholder="ex: Merci pour votre commande !" style="resize:vertical; padding:10px 12px; border-radius:8px; border:1px solid #e5e5e5; font-size:14px; background:#fafafa; width:100%;"></textarea>
       </div>
@@ -184,6 +188,11 @@ function showInvoice() {
   due.setDate(due.getDate() + 30);
   document.getElementById('due-date').value = due.toISOString().split('T')[0];
   if (document.getElementById('items-list').children.length === 0) addItem();
+  // Fetch next invoice number automatically
+  fetch('/api/next-invoice-number')
+    .then(r => r.json())
+    .then(d => { if (d.nextNumber) document.getElementById('ref-num').value = d.nextNumber; })
+    .catch(() => {});
 }
 
 let qbTaxCodes = [];
@@ -361,6 +370,7 @@ async function createInvoice() {
           Line: lines,
           TxnDate: document.getElementById('invoice-date').value || undefined,
           DueDate: document.getElementById('due-date').value || undefined,
+          DocNumber: document.getElementById('ref-num').value || undefined,
           CustomerMemo: document.getElementById('note').value ? { value: document.getElementById('note').value } : undefined
         }
       })
@@ -387,6 +397,7 @@ function resetForm() {
   document.getElementById('client-results').innerHTML = '';
   document.getElementById('items-list').innerHTML = '';
   document.getElementById('invoice-date').value = new Date().toISOString().split('T')[0];
+  document.getElementById('ref-num').value = '';
   document.getElementById('note').value = '';
   document.getElementById('success-banner').classList.remove('visible');
   const btn = document.getElementById('create-btn');
