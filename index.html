@@ -90,7 +90,7 @@
     <div class="card">
       <div class="section-title">Client</div>
       <div class="search-row">
-        <input type="text" id="client-search" placeholder="Chercher un client par nom..." onkeydown="if(event.key==='Enter') searchClient()" />
+        <input type="text" id="client-search" placeholder="Chercher un client par nom..." onkeydown="if(event.key==='Enter') searchClient()" oninput="autoSearch(this.value)" />
         <button class="btn-dark" onclick="searchClient()">
           <i class="ti ti-search"></i> Chercher
         </button>
@@ -225,6 +225,13 @@ function updateAllSelects() {
   });
 }
 
+let searchTimeout = null;
+function autoSearch(val) {
+  clearTimeout(searchTimeout);
+  if (val.length < 2) return;
+  searchTimeout = setTimeout(() => searchClient(), 400);
+}
+
 async function searchClient() {
   const q = document.getElementById('client-search').value.trim();
   if (!q) return;
@@ -308,9 +315,17 @@ function filterProducts(clientName, clientId) {
 
 function selectClient(id, name, email) {
   selectedClient = { id, name: unescape(name), email: unescape(email) };
-  document.querySelectorAll('.client-result').forEach(el => el.classList.remove('selected'));
-  const el = document.getElementById('cr-' + id);
-  if (el) el.classList.add('selected');
+  // Hide all other results, show only selected
+  document.querySelectorAll('.client-result').forEach(el => {
+    if (el.id === 'cr-' + id) {
+      el.classList.add('selected');
+      el.style.display = 'block';
+    } else {
+      el.style.display = 'none';
+    }
+  });
+  // Clear search input
+  document.getElementById('client-search').value = unescape(name);
   // Filter products based on client category
   const filtered = filterProducts(unescape(name), id);
   document.querySelectorAll('.product-select').forEach(sel => {
