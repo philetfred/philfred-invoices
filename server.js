@@ -141,7 +141,7 @@ let priceRules = [
   { name: 'Depanneur Plus', type: 'percent', value: -25 },
   { name: 'IGA extra Châteauguay', type: 'percent', value: -25 },
   { name: 'IGA extra Famille Reid-Boursier inc.', type: 'percent', value: -25 },
-  { name: 'IGA extra Marché d'alimentation Beck inc.', type: 'percent', value: -25 },
+  { name: "IGA extra Marché d'alimentation Beck inc.", type: "percent", value: -25 },
   { name: 'IGA extra Marché St-Pierre et Fils', type: 'percent', value: -25 },
   { name: 'La Maraîchère', type: 'percent', value: -25 },
   { name: 'Les Marchés Pépin Inc.', type: 'percent', value: -25 },
