@@ -111,6 +111,83 @@ app.get('/api/customer/:id', async (req, res) => {
   }
 });
 
+// ─── Price Rules Storage ──────────────────────────────────────────────────────
+
+let priceRules = [
+  // 20% de marge
+  { name: 'IGA extra Super Marché Famille Primeau inc. Beauharnois', type: 'percent', value: -20 },
+  { name: 'IGA extra Super Marché Primeau et fils inc.', type: 'percent', value: -20 },
+  // 22% de marge
+  { name: 'IGA extra Gladu (2747-6761 Québec Inc.)', type: 'percent', value: -22 },
+  { name: 'IGA Extra Laprairie', type: 'percent', value: -22 },
+  { name: 'IGA extra Les Marchés Lambert Chambly', type: 'percent', value: -22 },
+  { name: 'IGA extra Les Marchés Lambert Richelieu', type: 'percent', value: -22 },
+  { name: 'IGA extra Yan Gladu Douglas (9425-6211 Qc Inc.)', type: 'percent', value: -22 },
+  { name: 'IGA Gladu Saint-Luc (9425-6260 Qc Inc.)', type: 'percent', value: -22 },
+  { name: 'IGA Groupe Pro 40 inc.', type: 'percent', value: -22 },
+  { name: 'IGA Supermarché Laplante inc.', type: 'percent', value: -22 },
+  { name: 'IGA Candiac Sobeys Capital Inc', type: 'percent', value: -22 },
+  // 25% de marge
+  { name: 'Dépanneur Conrad-Gosselin Inc.', type: 'percent', value: -25 },
+  { name: 'Dépanneur Grimard - Richelieu (9070-9783 Qc Inc.)', type: 'percent', value: -25 },
+  { name: 'Dépanneur Lionel-Boulet Inc.', type: 'percent', value: -25 },
+  { name: 'Dépanneur Marieville BSG Inc.', type: 'percent', value: -25 },
+  { name: 'Marché 365 (2435-7147 Qc Inc.)', type: 'percent', value: -25 },
+  { name: 'Marché Dessaulles', type: 'percent', value: -25 },
+  { name: 'Marché Venise', type: 'percent', value: -25 },
+  { name: 'Metro Gaz', type: 'percent', value: -25 },
+  { name: 'Mon Petit Comptoir (Metro Bigras)', type: 'percent', value: -25 },
+  { name: '2950-6680 Qc Inc. (Shell Boulevard Saint-Luc )', type: 'percent', value: -25 },
+  { name: 'Depanneur Plus', type: 'percent', value: -25 },
+  { name: 'IGA extra Châteauguay', type: 'percent', value: -25 },
+  { name: 'IGA extra Famille Reid-Boursier inc.', type: 'percent', value: -25 },
+  { name: 'IGA extra Marché d'alimentation Beck inc.', type: 'percent', value: -25 },
+  { name: 'IGA extra Marché St-Pierre et Fils', type: 'percent', value: -25 },
+  { name: 'La Maraîchère', type: 'percent', value: -25 },
+  { name: 'Les Marchés Pépin Inc.', type: 'percent', value: -25 },
+  { name: 'Les marchés Valérie et Martin Varennes', type: 'percent', value: -25 },
+  { name: 'Marche Emily Philip Desmarais inc.', type: 'percent', value: -25 },
+  { name: 'IGA - Famille Leblanc, Forté & fils', type: 'percent', value: -25 },
+  { name: 'IGA Atwater', type: 'percent', value: -25 },
+  { name: 'IGA Barcelo Molson', type: 'percent', value: -25 },
+  { name: 'IGA Extra Supermarché Gilles Bariteau', type: 'percent', value: -25 },
+  { name: 'IGA Famille Jodoin - 9026-4979 QUÉBEC INC.', type: 'percent', value: -25 },
+  { name: 'IGA Famille Jodoin Douville - 9165-1588 QUÉBEC INC.', type: 'percent', value: -25 },
+  { name: 'IGA Marché H. Dauphinais inc', type: 'percent', value: -25 },
+  { name: 'IGA Supermarché St-Henri', type: 'percent', value: -25 },
+  { name: 'IGA Valérie et Martin Longueuil', type: 'percent', value: -25 },
+  { name: 'Supermarché Famille Picard #8615', type: 'percent', value: -25 },
+  // 30% de marge
+  { name: 'IGA extra Marché Vincent inc.', type: 'percent', value: -30 },
+  { name: 'Pasquier Delson', type: 'percent', value: -30 },
+  { name: 'Pasquier St-Jean-sur-Richelieu', type: 'percent', value: -30 },
+  // Super C -8$ fixe
+  { name: 'super_c_pattern', type: 'pattern_fixed', value: -8, pattern: 'super c' }
+];
+
+app.get('/api/price-rules', (req, res) => {
+  res.json(priceRules);
+});
+
+app.post('/api/price-rules', (req, res) => {
+  priceRules = req.body;
+  res.json({ success: true });
+});
+
+app.post('/api/price-rules/add', (req, res) => {
+  const rule = req.body;
+  // Remove existing rule for same client
+  priceRules = priceRules.filter(r => r.name.toLowerCase() !== rule.name.toLowerCase());
+  priceRules.push(rule);
+  res.json({ success: true });
+});
+
+app.delete('/api/price-rules/:index', (req, res) => {
+  const index = parseInt(req.params.index);
+  priceRules.splice(index, 1);
+  res.json({ success: true });
+});
+
 // ─── Tax Codes ────────────────────────────────────────────────────────────────
 
 app.get('/api/taxcodes', async (req, res) => {
@@ -220,6 +297,10 @@ app.post('/api/qb-post', async (req, res) => {
 
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
+});
+
+app.get('/admin', (req, res) => {
+  res.sendFile(path.join(__dirname, 'admin.html'));
 });
 
 app.get('/auth', (req, res) => {
