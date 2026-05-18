@@ -70,7 +70,10 @@
     <div class="sub">Pizzeria · Facturation</div>
   </div>
   <span class="tag" id="conn-tag">Vérification...</span>
-  <button class="reconnect-btn" id="reconnect-btn" onclick="window.location.href='/auth'" style="display:none; margin-left:12px;">
+  <a href="/admin" style="display:none; margin-left:12px; font-size:12px; color:#888; text-decoration:none;" id="admin-btn">
+    ⚙️ Admin Prix
+  </a>
+  <button class="reconnect-btn" id="reconnect-btn" onclick="window.location.href='/auth'" style="display:none; margin-left:8px;">
     Reconnecter QuickBooks
   </button>
 </div>
@@ -182,6 +185,7 @@ function showInvoice() {
   document.getElementById('conn-tag').textContent = '✓ Connecté';
   document.getElementById('conn-tag').className = 'tag connected';
   document.getElementById('reconnect-btn').style.display = 'block';
+  document.getElementById('admin-btn').style.display = 'block';
   const today = new Date();
   document.getElementById('invoice-date').value = today.toISOString().split('T')[0];
   const due = new Date();
@@ -199,14 +203,15 @@ let qbTaxCodes = [];
 
 async function loadProducts() {
   try {
-    // Load products and tax codes in parallel
+    // Load products, tax codes and price rules in parallel
     const [itemRes, taxRes] = await Promise.all([
       fetch('/api/qb', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query: 'SELECT * FROM Item WHERE Active=true MAXRESULTS 200' })
       }),
-      fetch('/api/taxcodes')
+      fetch('/api/taxcodes'),
+      loadPriceRules()
     ]);
     const itemData = await itemRes.json();
     const taxData = await taxRes.json();
@@ -381,35 +386,35 @@ function addItem() {
   recalc();
 }
 
+// Price rules - fetched from server (shared across all devices)
+let cachedPriceRules = null;
+
+async function loadPriceRules() {
+  try {
+    const res = await fetch('/api/price-rules');
+    cachedPriceRules = await res.json();
+  } catch(e) {
+    cachedPriceRules = [];
+  }
+}
+
 function applyPriceRule(basePrice) {
   if (!selectedClient) return basePrice;
+  const clientName = (selectedClient.name || '').toLowerCase();
   const fqn = (qbClients[selectedClient.id]?.fullyQualifiedName || '').toLowerCase();
-  const name = (selectedClient.name || '').toLowerCase();
-  const priceLevel = (qbClients[selectedClient.id]?.priceLevelRef || '').toLowerCase();
   
-  // Use price level from QuickBooks if available
-  if (priceLevel.includes('20% de marge') || priceLevel.includes('20% marge')) {
-    return Math.max(0, basePrice * 0.80);
-  }
-  if (priceLevel.includes('22% de marge') || priceLevel.includes('22% marge')) {
-    return Math.max(0, basePrice * 0.78);
-  }
-  if (priceLevel.includes('25% de marge') || priceLevel.includes('25% marge')) {
-    return Math.max(0, basePrice * 0.75);
-  }
-  if (priceLevel.includes('30% de marge') || priceLevel.includes('30% marge')) {
-    return Math.max(0, basePrice * 0.70);
-  }
-  if (priceLevel.includes('loblaws')) {
-    return Math.max(0, basePrice * 0.75);
-  }
-  if (priceLevel.includes('super c')) {
-    return Math.max(0, basePrice - 8);
-  }
+  const rules = cachedPriceRules || [];
   
-  // Fallback: detect Super C by name
-  if (fqn.includes('super c') || name.includes('super c')) {
-    return Math.max(0, basePrice - 8);
+  for (const rule of rules) {
+    if (rule.type === 'pattern_fixed') {
+      if (clientName.includes(rule.pattern) || fqn.includes(rule.pattern)) {
+        return Math.max(0, basePrice + rule.value);
+      }
+    } else if (rule.type === 'percent') {
+      if (clientName === rule.name.toLowerCase() || fqn.endsWith(':' + rule.name.toLowerCase())) {
+        return Math.max(0, basePrice * (1 + rule.value / 100));
+      }
+    }
   }
   
   return basePrice;
