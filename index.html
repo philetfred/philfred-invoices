@@ -252,7 +252,8 @@ async function searchClient() {
         name: c.DisplayName || '',
         parentName: c.ParentRef ? c.ParentRef.name : '',
         email: c.PrimaryEmailAddr ? c.PrimaryEmailAddr.Address : '',
-        fullyQualifiedName: c.FullyQualifiedName || ''
+        fullyQualifiedName: c.FullyQualifiedName || '',
+        priceLevelRef: c.PriceLevelRef ? c.PriceLevelRef.name : null
       };
     });
     div.innerHTML = customers.map(c => `
@@ -313,8 +314,8 @@ function filterProducts(clientName, clientId) {
   return filterProductsByCategory(category);
 }
 
-function selectClient(id, name, email) {
-  selectedClient = { id, name: unescape(name), email: unescape(email) };
+async function selectClient(id, name, email) {
+  selectedClient = { id, name: unescape(name), email: unescape(email), priceAdjustment: 0, priceAdjustmentType: 'none' };
   // Hide all other results, show only selected
   document.querySelectorAll('.client-result').forEach(el => {
     if (el.id === 'cr-' + id) {
@@ -326,6 +327,24 @@ function selectClient(id, name, email) {
   });
   // Clear search input
   document.getElementById('client-search').value = unescape(name);
+  
+  // Fetch customer price rules
+  try {
+    const res = await fetch('/api/customer/' + id);
+    const data = await res.json();
+    const customer = data.Customer;
+    if (customer && customer.PriceLevelRef) {
+      // Has a price level - fetch price level details
+      selectedClient.priceLevelRef = customer.PriceLevelRef.value;
+      selectedClient.priceLevelName = customer.PriceLevelRef.name;
+    }
+    // Check for sales price rules in customer data
+    if (customer && customer.SalesTermRef) {
+      selectedClient.salesTermRef = customer.SalesTermRef;
+    }
+  } catch(e) {
+    console.log('Could not fetch customer price rules', e);
+  }
   // Filter products based on client category
   const filtered = filterProducts(unescape(name), id);
   document.querySelectorAll('.product-select').forEach(sel => {
@@ -362,9 +381,44 @@ function addItem() {
   recalc();
 }
 
+function applyPriceRule(basePrice) {
+  if (!selectedClient) return basePrice;
+  const fqn = (qbClients[selectedClient.id]?.fullyQualifiedName || '').toLowerCase();
+  const name = (selectedClient.name || '').toLowerCase();
+  const priceLevel = (qbClients[selectedClient.id]?.priceLevelRef || '').toLowerCase();
+  
+  // Use price level from QuickBooks if available
+  if (priceLevel.includes('20% de marge') || priceLevel.includes('20% marge')) {
+    return Math.max(0, basePrice * 0.80);
+  }
+  if (priceLevel.includes('22% de marge') || priceLevel.includes('22% marge')) {
+    return Math.max(0, basePrice * 0.78);
+  }
+  if (priceLevel.includes('25% de marge') || priceLevel.includes('25% marge')) {
+    return Math.max(0, basePrice * 0.75);
+  }
+  if (priceLevel.includes('30% de marge') || priceLevel.includes('30% marge')) {
+    return Math.max(0, basePrice * 0.70);
+  }
+  if (priceLevel.includes('loblaws')) {
+    return Math.max(0, basePrice * 0.75);
+  }
+  if (priceLevel.includes('super c')) {
+    return Math.max(0, basePrice - 8);
+  }
+  
+  // Fallback: detect Super C by name
+  if (fqn.includes('super c') || name.includes('super c')) {
+    return Math.max(0, basePrice - 8);
+  }
+  
+  return basePrice;
+}
+
 function onProductChange(sel, rowId) {
-  const price = parseFloat(sel.options[sel.selectedIndex].getAttribute('data-price')) || 0;
-  document.getElementById(rowId).querySelector('.price-input').value = price.toFixed(2);
+  const basePrice = parseFloat(sel.options[sel.selectedIndex].getAttribute('data-price')) || 0;
+  const adjustedPrice = applyPriceRule(basePrice);
+  document.getElementById(rowId).querySelector('.price-input').value = adjustedPrice.toFixed(2);
   recalc();
 }
 
