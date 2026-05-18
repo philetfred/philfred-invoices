@@ -14,7 +14,7 @@
   .sub { font-size: 11px; color: #888; letter-spacing: 2px; text-transform: uppercase; }
   .tag { font-size: 11px; padding: 3px 10px; border-radius: 20px; background: #333; color: #aaa; margin-left: auto; }
   .tag.connected { background: #14532d; color: #4ade80; }
-  .container { max-width: 800px; margin: 32px auto; padding: 0 16px; }
+  .container { max-width: 960px; margin: 32px auto; padding: 0 16px; }
   .card { background: white; border-radius: 12px; border: 1px solid #e5e5e5; padding: 24px; margin-bottom: 20px; }
   .section-title { font-size: 11px; font-weight: 500; color: #888; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
   .section-title::after { content: ''; flex: 1; height: 1px; background: #f0f0f0; }
@@ -42,10 +42,29 @@
   .client-result.selected { border-color: #e63946; background: #fff5f5; }
   .client-name { font-size: 15px; font-weight: 500; color: #1a1a1a; }
   .client-email { font-size: 13px; color: #888; }
-  .items-header { display: grid; grid-template-columns: 2fr 70px 100px 120px 40px; gap: 8px; padding-bottom: 8px; border-bottom: 1px solid #f0f0f0; margin-bottom: 8px; }
+
+  /* ── Items grid: Produit | Description | Qté | Prix | Taxe | × ── */
+  .items-header {
+    display: grid;
+    grid-template-columns: 1.6fr 1.8fr 60px 90px 130px 36px;
+    gap: 8px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #f0f0f0;
+    margin-bottom: 8px;
+  }
   .items-header span { font-size: 12px; color: #888; }
-  .item-row { display: grid; grid-template-columns: 2fr 70px 100px 120px 40px; gap: 8px; align-items: center; margin-bottom: 8px; }
+  .item-row {
+    display: grid;
+    grid-template-columns: 1.6fr 1.8fr 60px 90px 130px 36px;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 8px;
+  }
   .item-row select, .item-row input { padding: 8px 10px; border-radius: 8px; border: 1px solid #e5e5e5; font-size: 13px; background: #fafafa; width: 100%; }
+  /* Description input — slightly muted to show it's auto-filled but editable */
+  .item-row .desc-input { font-size: 12px; color: #555; background: #f7f7f7; }
+  .item-row .desc-input:focus { background: white; border-color: #e63946; outline: none; color: #1a1a1a; }
+
   .remove-btn { background: none; border: none; color: #ccc; cursor: pointer; padding: 6px; border-radius: 6px; font-size: 20px; line-height: 1; }
   .remove-btn:hover { color: #e63946; }
   .add-item-btn { background: none; border: 1px dashed #e5e5e5; color: #888; padding: 8px 16px; border-radius: 8px; cursor: pointer; font-size: 13px; width: 100%; margin-top: 4px; }
@@ -60,6 +79,11 @@
   .success-banner p { font-size: 14px; color: #aaa; }
   .success-banner a { color: #e63946; }
   .reconnect-btn { background: none; border: none; color: #e63946; font-size: 12px; cursor: pointer; text-decoration: underline; }
+
+  @media (max-width: 700px) {
+    .items-header { grid-template-columns: 1fr 1fr 50px 80px 110px 32px; }
+    .item-row { grid-template-columns: 1fr 1fr 50px 80px 110px 32px; }
+  }
 </style>
 </head>
 <body>
@@ -104,7 +128,12 @@
     <div class="card">
       <div class="section-title">Items de la commande</div>
       <div class="items-header">
-        <span>Produit</span><span>Qté</span><span>Prix unit.</span><span>Taxe</span><span></span>
+        <span>Produit</span>
+        <span>Description</span>
+        <span>Qté</span>
+        <span>Prix unit.</span>
+        <span>Taxe</span>
+        <span></span>
       </div>
       <div id="items-list"></div>
       <button class="add-item-btn" onclick="addItem()">
@@ -192,7 +221,6 @@ function showInvoice() {
   due.setDate(due.getDate() + 30);
   document.getElementById('due-date').value = due.toISOString().split('T')[0];
   if (document.getElementById('items-list').children.length === 0) addItem();
-  // Fetch next invoice number automatically
   fetch('/api/next-invoice-number')
     .then(r => r.json())
     .then(d => { if (d.nextNumber) document.getElementById('ref-num').value = d.nextNumber; })
@@ -203,7 +231,6 @@ let qbTaxCodes = [];
 
 async function loadProducts() {
   try {
-    // Load products, tax codes and price rules in parallel
     const [itemRes, taxRes] = await Promise.all([
       fetch('/api/qb', {
         method: 'POST',
@@ -225,7 +252,7 @@ function updateAllSelects() {
   document.querySelectorAll('.product-select').forEach(sel => {
     const current = sel.value;
     sel.innerHTML = '<option value="">— Choisir un produit —</option>' +
-      qbProducts.map(p => `<option value="${p.Id}" data-price="${p.UnitPrice||0}">${p.Name}</option>`).join('');
+      qbProducts.map(p => `<option value="${p.Id}" data-price="${p.UnitPrice||0}" data-desc="${escape(p.Description||'')}">${p.Name}</option>`).join('');
     if (current) sel.value = current;
   });
 }
@@ -251,7 +278,6 @@ async function searchClient() {
     const data = await res.json();
     const customers = data.QueryResponse?.Customer || [];
     if (!customers.length) { div.innerHTML = '<div style="padding:8px;font-size:13px;color:#888;">Aucun client trouvé.</div>'; return; }
-    // Store client parent info for product filtering
     customers.forEach(c => {
       qbClients[c.Id] = {
         name: c.DisplayName || '',
@@ -271,33 +297,22 @@ async function searchClient() {
   }
 }
 
-// qbClients stores customer parent info loaded at startup
 let qbClients = {};
 
 function getClientCategory(customerId) {
   const client = qbClients[customerId];
   if (!client) return 'all';
-  
   const fqn = (client.fullyQualifiedName || '').toLowerCase();
   const parentName = (client.parentName || '').toLowerCase();
   const clientName = (client.name || '').toLowerCase();
   const email = (client.email || '').toLowerCase();
-  
-  // Check FullyQualifiedName first (most reliable - format: "Parent:Child")
   if (fqn.startsWith('loblaws inc')) return 'loblaws';
   if (fqn.startsWith('metro richelieu') || fqn.startsWith('métro richelieu')) return 'metro';
-  
-  // Check parent name
   if (parentName.includes('loblaws inc')) return 'loblaws';
   if (parentName.includes('metro richelieu') || parentName.includes('métro richelieu')) return 'metro';
-  
-  // Check email domain
   if (email.includes('@loblaw.ca') || email.includes('@provigo.ca') || email.includes('@maxi.ca')) return 'loblaws';
-  
-  // Check client name keywords for direct Loblaws clients
   const loblawsKeywords = ['maxi', 'provigo', 'loblaws inc', 'intermarché', 'intermarche', 'metc'];
   if (loblawsKeywords.some(k => clientName.includes(k))) return 'loblaws';
-  
   return 'all';
 }
 
@@ -321,7 +336,6 @@ function filterProducts(clientName, clientId) {
 
 async function selectClient(id, name, email) {
   selectedClient = { id, name: unescape(name), email: unescape(email), priceAdjustment: 0, priceAdjustmentType: 'none' };
-  // Hide all other results, show only selected
   document.querySelectorAll('.client-result').forEach(el => {
     if (el.id === 'cr-' + id) {
       el.classList.add('selected');
@@ -330,32 +344,26 @@ async function selectClient(id, name, email) {
       el.style.display = 'none';
     }
   });
-  // Clear search input
   document.getElementById('client-search').value = unescape(name);
-  
-  // Fetch customer price rules
   try {
     const res = await fetch('/api/customer/' + id);
     const data = await res.json();
     const customer = data.Customer;
     if (customer && customer.PriceLevelRef) {
-      // Has a price level - fetch price level details
       selectedClient.priceLevelRef = customer.PriceLevelRef.value;
       selectedClient.priceLevelName = customer.PriceLevelRef.name;
     }
-    // Check for sales price rules in customer data
     if (customer && customer.SalesTermRef) {
       selectedClient.salesTermRef = customer.SalesTermRef;
     }
   } catch(e) {
     console.log('Could not fetch customer price rules', e);
   }
-  // Filter products based on client category
   const filtered = filterProducts(unescape(name), id);
   document.querySelectorAll('.product-select').forEach(sel => {
     const current = sel.value;
     sel.innerHTML = '<option value="">— Choisir un produit —</option>' +
-      filtered.map(p => `<option value="${p.Id}" data-price="${p.UnitPrice||0}">${p.Name}</option>`).join('');
+      filtered.map(p => `<option value="${p.Id}" data-price="${p.UnitPrice||0}" data-desc="${escape(p.Description||'')}">${p.Name}</option>`).join('');
     if (current) sel.value = current;
   });
 }
@@ -369,8 +377,9 @@ function addItem() {
   div.innerHTML = `
     <select class="product-select" onchange="onProductChange(this,'${id}')">
       <option value="">— Choisir un produit —</option>
-      ${(selectedClient ? filterProducts(selectedClient.name, selectedClient.id) : qbProducts).map(p => `<option value="${p.Id}" data-price="${p.UnitPrice||0}">${p.Name}</option>`).join('')}
+      ${(selectedClient ? filterProducts(selectedClient.name, selectedClient.id) : qbProducts).map(p => `<option value="${p.Id}" data-price="${p.UnitPrice||0}" data-desc="${escape(p.Description||'')}">${p.Name}</option>`).join('')}
     </select>
+    <input type="text" class="desc-input" placeholder="Description..." />
     <input type="number" class="qty-input" value="1" min="1" onchange="recalc()" />
     <input type="number" class="price-input" value="0.00" step="0.01" onchange="recalc()" />
     <select class="tax-select" style="padding:8px 6px;border-radius:8px;border:1px solid #e5e5e5;font-size:12px;background:#fafafa;width:100%;">
@@ -386,7 +395,6 @@ function addItem() {
   recalc();
 }
 
-// Price rules - fetched from server (shared across all devices)
 let cachedPriceRules = null;
 
 async function loadPriceRules() {
@@ -402,9 +410,7 @@ function applyPriceRule(basePrice) {
   if (!selectedClient) return basePrice;
   const clientName = (selectedClient.name || '').toLowerCase();
   const fqn = (qbClients[selectedClient.id]?.fullyQualifiedName || '').toLowerCase();
-  
   const rules = cachedPriceRules || [];
-  
   for (const rule of rules) {
     if (rule.type === 'pattern_fixed') {
       if (clientName.includes(rule.pattern) || fqn.includes(rule.pattern)) {
@@ -416,14 +422,19 @@ function applyPriceRule(basePrice) {
       }
     }
   }
-  
   return basePrice;
 }
 
 function onProductChange(sel, rowId) {
-  const basePrice = parseFloat(sel.options[sel.selectedIndex].getAttribute('data-price')) || 0;
+  const opt = sel.options[sel.selectedIndex];
+  const basePrice = parseFloat(opt.getAttribute('data-price')) || 0;
+  // ── Auto-fill description from QuickBooks ──
+  const desc = unescape(opt.getAttribute('data-desc') || '');
+  const row = document.getElementById(rowId);
+  row.querySelector('.desc-input').value = desc;
+  // ── Apply price rule ──
   const adjustedPrice = applyPriceRule(basePrice);
-  document.getElementById(rowId).querySelector('.price-input').value = adjustedPrice.toFixed(2);
+  row.querySelector('.price-input').value = adjustedPrice.toFixed(2);
   recalc();
 }
 
@@ -452,18 +463,24 @@ async function createInvoice() {
     const qty = parseFloat(row.querySelector('.qty-input')?.value)||0;
     const price = parseFloat(row.querySelector('.price-input')?.value)||0;
     const taxCode = row.querySelector('.tax-select')?.value || 'NON';
+    // ── Récupère la description (éditable par l'utilisateur) ──
+    const desc = row.querySelector('.desc-input')?.value.trim() || '';
     if (!sel?.value || qty <= 0) { valid = false; return; }
     const lineDetail = {
       ItemRef: { value: sel.value },
       Qty: qty,
       UnitPrice: price
     };
+    if (desc) {
+      lineDetail.Description = desc;
+    }
     if (taxCode !== 'NON') {
       lineDetail.TaxCodeRef = { value: taxCode };
     }
     lines.push({
       Amount: parseFloat((qty * price).toFixed(2)),
       DetailType: 'SalesItemLineDetail',
+      Description: desc || undefined,
       SalesItemLineDetail: lineDetail
     });
   });
@@ -521,7 +538,6 @@ function resetForm() {
   itemCount = 0;
   addItem();
   recalc();
-  // Fetch next invoice number for new invoice
   fetch('/api/next-invoice-number')
     .then(r => r.json())
     .then(d => { if (d.nextNumber) document.getElementById('ref-num').value = d.nextNumber; })
