@@ -471,17 +471,16 @@ async function createInvoice() {
       Qty: qty,
       UnitPrice: price
     };
-    if (desc) {
-      lineDetail.Description = desc;
-    }
     if (taxCode !== 'NON') {
       lineDetail.TaxCodeRef = { value: taxCode };
     }
-    lines.push({
+    const lineObj = {
       Amount: parseFloat((qty * price).toFixed(2)),
       DetailType: 'SalesItemLineDetail',
       SalesItemLineDetail: lineDetail
-    });
+    };
+    if (desc) lineObj.Description = desc;
+    lines.push(lineObj);
   });
   if (!valid || !lines.length) { alert('Ajoute au moins un produit valide.'); return; }
 
