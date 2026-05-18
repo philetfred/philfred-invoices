@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Phil & Fred — Admin Prix</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.44.0/tabler-icons.min.css">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f5; min-height: 100vh; }
+  .header { background: #1a1a1a; color: white; padding: 16px 24px; display: flex; align-items: center; gap: 16px; }
+  .logo-text { font-size: 22px; font-weight: 500; }
+  .logo-text span { color: #e63946; }
+  .sub { font-size: 11px; color: #888; letter-spacing: 2px; text-transform: uppercase; }
+  .back-btn { margin-left: auto; background: none; border: 1px solid #444; color: white; padding: 8px 14px; border-radius: 8px; cursor: pointer; font-size: 13px; text-decoration: none; display: flex; align-items: center; gap: 6px; }
+  .back-btn:hover { background: #333; }
+  .container { max-width: 800px; margin: 32px auto; padding: 0 16px; }
+  .card { background: white; border-radius: 12px; border: 1px solid #e5e5e5; padding: 24px; margin-bottom: 20px; }
+  .section-title { font-size: 11px; font-weight: 500; color: #888; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+  .section-title::after { content: ''; flex: 1; height: 1px; background: #f0f0f0; }
+  .add-form { display: grid; grid-template-columns: 2fr 1fr 1fr auto; gap: 10px; align-items: end; margin-bottom: 20px; }
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  .field label { font-size: 12px; color: #666; }
+  .field input, .field select { padding: 10px 12px; border-radius: 8px; border: 1px solid #e5e5e5; font-size: 14px; background: #fafafa; color: #1a1a1a; width: 100%; }
+  .btn-red { background: #e63946; color: white; border: none; padding: 10px 16px; border-radius: 8px; font-size: 14px; font-weight: 500; cursor: pointer; white-space: nowrap; }
+  .btn-red:hover { background: #c1121f; }
+  .rules-table { width: 100%; border-collapse: collapse; }
+  .rules-table th { text-align: left; font-size: 12px; color: #888; font-weight: 500; padding: 8px 12px; border-bottom: 1px solid #f0f0f0; }
+  .rules-table td { padding: 10px 12px; border-bottom: 1px solid #f9f9f9; font-size: 14px; }
+  .rules-table tr:hover td { background: #fafafa; }
+  .badge { display: inline-block; padding: 3px 8px; border-radius: 20px; font-size: 12px; font-weight: 500; }
+  .badge-red { background: #fef2f2; color: #dc2626; }
+  .badge-orange { background: #fff7ed; color: #ea580c; }
+  .badge-fixed { background: #f0fdf4; color: #16a34a; }
+  .delete-btn { background: none; border: none; color: #ccc; cursor: pointer; padding: 4px 8px; border-radius: 6px; font-size: 16px; }
+  .delete-btn:hover { color: #e63946; background: #fef2f2; }
+  .search-row { display: flex; gap: 8px; margin-bottom: 12px; }
+  .search-row input { flex: 1; padding: 10px 12px; border-radius: 8px; border: 1px solid #e5e5e5; font-size: 14px; background: #fafafa; }
+  .client-suggestion { padding: 10px 12px; border: 1px solid #e5e5e5; border-radius: 8px; margin-top: 4px; cursor: pointer; font-size: 14px; }
+  .client-suggestion:hover { border-color: #e63946; background: #fff5f5; }
+  .empty { text-align: center; padding: 32px; color: #888; font-size: 14px; }
+  .info-box { background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 8px; padding: 12px 16px; font-size: 13px; color: #0369a1; margin-bottom: 16px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <div class="logo-text">Phil <span>&</span> Fred</div>
+    <div class="sub">Pizzeria · Admin Prix</div>
+  </div>
+  <a href="/" class="back-btn">
+    <i class="ti ti-arrow-left"></i> Retour à l'app
+  </a>
+</div>
+
+<div class="container">
+
+  <div class="card">
+    <div class="section-title">Ajouter une règle de prix</div>
+    <div class="info-box">
+      <i class="ti ti-info-circle"></i> Cherche le client dans QuickBooks, sélectionne-le, choisis le type de rabais et clique Ajouter.
+    </div>
+
+    <div class="search-row">
+      <input type="text" id="client-search" placeholder="Chercher un client par nom..." oninput="autoSearch(this.value)" onkeydown="if(event.key==='Enter') searchClient()" />
+      <button class="btn-red" onclick="searchClient()">
+        <i class="ti ti-search"></i> Chercher
+      </button>
+    </div>
+    <div id="client-results"></div>
+
+    <div id="add-form" style="display:none; margin-top:16px;">
+      <div class="add-form">
+        <div class="field">
+          <label>Client sélectionné</label>
+          <input type="text" id="selected-name" readonly style="background:#f0fdf4; border-color:#86efac;" />
+        </div>
+        <div class="field">
+          <label>Type</label>
+          <select id="rule-type" onchange="updatePlaceholder()">
+            <option value="percent">% de rabais</option>
+            <option value="fixed">Montant fixe ($)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label id="value-label">Rabais (%)</label>
+          <input type="number" id="rule-value" placeholder="ex: 22" step="0.01" />
+        </div>
+        <button class="btn-red" onclick="addRule()">
+          <i class="ti ti-plus"></i> Ajouter
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="section-title">Règles de prix configurées</div>
+    <div id="rules-list"></div>
+  </div>
+
+</div>
+
+<script>
+let selectedClientForRule = null;
+let searchTimeout = null;
+
+function autoSearch(val) {
+  clearTimeout(searchTimeout);
+  if (val.length < 2) {
+    document.getElementById('client-results').innerHTML = '';
+    return;
+  }
+  searchTimeout = setTimeout(() => searchClient(), 400);
+}
+
+async function searchClient() {
+  const q = document.getElementById('client-search').value.trim();
+  if (!q) return;
+  const div = document.getElementById('client-results');
+  div.innerHTML = '<div style="padding:8px;font-size:13px;color:#888;">Recherche...</div>';
+  try {
+    const res = await fetch('/api/qb', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: `SELECT * FROM Customer WHERE DisplayName LIKE '%${q}%' MAXRESULTS 8` })
+    });
+    const data = await res.json();
+    const customers = data.QueryResponse?.Customer || [];
+    if (!customers.length) {
+      div.innerHTML = '<div style="padding:8px;font-size:13px;color:#888;">Aucun client trouvé.</div>';
+      return;
+    }
+    div.innerHTML = customers.map(c => `
+      <div class="client-suggestion" onclick="selectClientForRule('${c.Id}', '${escape(c.DisplayName||'')}')">
+        ${c.DisplayName||''}
+        <span style="font-size:12px;color:#888;"> — ${c.PrimaryEmailAddr?.Address||''}</span>
+      </div>`).join('');
+  } catch(e) {
+    div.innerHTML = '<div style="padding:8px;font-size:13px;color:#dc2626;">Erreur de recherche.</div>';
+  }
+}
+
+function selectClientForRule(id, name) {
+  selectedClientForRule = { id, name: unescape(name) };
+  document.getElementById('selected-name').value = unescape(name);
+  document.getElementById('client-results').innerHTML = '';
+  document.getElementById('client-search').value = '';
+  document.getElementById('add-form').style.display = 'block';
+}
+
+function updatePlaceholder() {
+  const type = document.getElementById('rule-type').value;
+  const label = document.getElementById('value-label');
+  const input = document.getElementById('rule-value');
+  if (type === 'percent') {
+    label.textContent = 'Rabais (%)';
+    input.placeholder = 'ex: 22';
+  } else {
+    label.textContent = 'Montant ($)';
+    input.placeholder = 'ex: 8';
+  }
+}
+
+async function addRule() {
+  if (!selectedClientForRule) { alert('Sélectionne un client.'); return; }
+  const type = document.getElementById('rule-type').value;
+  const value = parseFloat(document.getElementById('rule-value').value);
+  if (isNaN(value) || value <= 0) { alert('Entre un rabais valide.'); return; }
+
+  const rule = {
+    name: selectedClientForRule.name,
+    type: type,
+    value: -value
+  };
+
+  try {
+    await fetch('/api/price-rules/add', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(rule)
+    });
+    await renderRules();
+    selectedClientForRule = null;
+    document.getElementById('selected-name').value = '';
+    document.getElementById('rule-value').value = '';
+    document.getElementById('add-form').style.display = 'none';
+    alert('✅ Règle ajoutée avec succès !');
+  } catch(e) {
+    alert('Erreur lors de la sauvegarde.');
+  }
+}
+
+async function deleteRule(index) {
+  if (!confirm('Supprimer cette règle ?')) return;
+  try {
+    await fetch('/api/price-rules/' + index, { method: 'DELETE' });
+    await renderRules();
+  } catch(e) {
+    alert('Erreur lors de la suppression.');
+  }
+}
+
+async function renderRules() {
+  const res = await fetch('/api/price-rules');
+  const rules = await res.json();
+  const div = document.getElementById('rules-list');
+  
+  const displayRules = rules.filter(r => r.type !== 'pattern_fixed');
+  
+  if (!displayRules.length) {
+    div.innerHTML = '<div class="empty">Aucune règle configurée</div>';
+    return;
+  }
+  
+  div.innerHTML = `
+    <table class="rules-table">
+      <thead>
+        <tr>
+          <th>Client</th>
+          <th>Rabais</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rules.map((rule, i) => {
+          if (rule.type === 'pattern_fixed') return '';
+          const badge = rule.type === 'percent' 
+            ? `<span class="badge badge-red">${Math.abs(rule.value)}% de rabais</span>`
+            : `<span class="badge badge-fixed">-${Math.abs(rule.value)}$ fixe</span>`;
+          return `
+            <tr>
+              <td>${rule.name}</td>
+              <td>${badge}</td>
+              <td><button class="delete-btn" onclick="deleteRule(${i})">×</button></td>
+            </tr>`;
+        }).join('')}
+      </tbody>
+    </table>`;
+}
+
+renderRules();
+</script>
+</body>
+</html>
