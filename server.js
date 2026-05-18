@@ -93,6 +93,24 @@ async function getValidToken() {
   return tokenStore.accessToken;
 }
 
+// Get customer details including price rules
+app.get('/api/customer/:id', async (req, res) => {
+  try {
+    const token = await getValidToken();
+    const url = `https://quickbooks.api.intuit.com/v3/company/${tokenStore.realmId}/customer/${req.params.id}?minorversion=65`;
+    const response = await fetch(url, {
+      headers: {
+        'Authorization': 'Bearer ' + token,
+        'Accept': 'application/json'
+      }
+    });
+    const data = await response.json();
+    res.json(data);
+  } catch (err) {
+    res.status(401).json({ error: err.message });
+  }
+});
+
 // ─── Tax Codes ────────────────────────────────────────────────────────────────
 
 app.get('/api/taxcodes', async (req, res) => {
@@ -200,8 +218,21 @@ app.post('/api/qb-post', async (req, res) => {
   }
 });
 
-app.get('*', (req, res) => {
+app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
+});
+
+app.get('/auth', (req, res) => {
+  // handled above
+});
+
+app.get('*', (req, res) => {
+  // Only serve index.html for non-API routes
+  if (req.path.startsWith('/api/') || req.path === '/callback') {
+    res.status(404).json({ error: 'Not found' });
+  } else {
+    res.sendFile(path.join(__dirname, 'index.html'));
+  }
 });
 
 const PORT = process.env.PORT || 3000;
