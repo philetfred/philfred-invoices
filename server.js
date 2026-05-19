@@ -295,6 +295,73 @@ app.post('/api/qb-post', async (req, res) => {
   }
 });
 
+
+// ─── Parse PDF via Claude API ─────────────────────────────────────────────────
+
+app.post('/api/parse-pdf', async (req, res) => {
+  const { pdfBase64 } = req.body;
+  if (!pdfBase64) return res.status(400).json({ error: 'Missing pdfBase64' });
+
+  const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+  if (!ANTHROPIC_API_KEY) return res.status(500).json({ error: 'ANTHROPIC_API_KEY not set on server' });
+
+  try {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01'
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1000,
+        messages: [{
+          role: 'user',
+          content: [
+            {
+              type: 'document',
+              source: { type: 'base64', media_type: 'application/pdf', data: pdfBase64 }
+            },
+            {
+              type: 'text',
+              text: `Extract the purchase order data from this PDF. Return ONLY a valid JSON object (no markdown, no backticks) with this exact structure:
+{
+  "po_number": "the purchase order number (BON DE COMMANDE #)",
+  "supplier_name": "the store/magasin name (e.g. Pasquier St-Jean-sur-Richelieu)",
+  "delivery_date": "YYYY-MM-DD format of the planned delivery date",
+  "items": [
+    {
+      "description": "full product description from the PDF",
+      "cases": 4
+    }
+  ]
+}
+Return only the JSON, nothing else.`
+            }
+          ]
+        }]
+      })
+    });
+
+    const data = await response.json();
+    if (data.error) return res.status(500).json({ error: data.error.message });
+    const text = data.content?.[0]?.text || '';
+    // Try to parse JSON from response
+    let parsed;
+    try {
+      parsed = JSON.parse(text.trim());
+    } catch(e) {
+      const match = text.match(/\{[\s\S]*\}/);
+      if (match) parsed = JSON.parse(match[0]);
+      else return res.status(500).json({ error: 'Could not parse Claude response', raw: text });
+    }
+    res.json(parsed);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
 });
