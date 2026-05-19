@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Phil & Fred — Import Bon de Commande</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.44.0/tabler-icons.min.css">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f5; min-height: 100vh; }
+  .header { background: #1a1a1a; color: white; padding: 16px 24px; display: flex; align-items: center; gap: 16px; }
+  .logo-text { font-size: 22px; font-weight: 500; }
+  .logo-text span { color: #e63946; }
+  .sub { font-size: 11px; color: #888; letter-spacing: 2px; text-transform: uppercase; }
+  .back-btn { margin-left: auto; background: none; border: 1px solid #444; color: white; padding: 8px 14px; border-radius: 8px; cursor: pointer; font-size: 13px; text-decoration: none; display: flex; align-items: center; gap: 6px; }
+  .back-btn:hover { background: #333; }
+  .container { max-width: 800px; margin: 32px auto; padding: 0 16px; }
+  .card { background: white; border-radius: 12px; border: 1px solid #e5e5e5; padding: 24px; margin-bottom: 20px; }
+  .section-title { font-size: 11px; font-weight: 500; color: #888; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+  .section-title::after { content: ''; flex: 1; height: 1px; background: #f0f0f0; }
+
+  /* Upload zone */
+  .upload-zone { border: 2px dashed #e5e5e5; border-radius: 12px; padding: 48px 24px; text-align: center; cursor: pointer; transition: all .2s; position: relative; }
+  .upload-zone:hover, .upload-zone.dragover { border-color: #e63946; background: #fff5f5; }
+  .upload-zone input[type=file] { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
+  .upload-icon { font-size: 48px; color: #ddd; margin-bottom: 12px; }
+  .upload-zone h3 { font-size: 16px; color: #1a1a1a; margin-bottom: 6px; }
+  .upload-zone p { font-size: 13px; color: #888; }
+  .upload-zone.has-file { border-color: #16a34a; background: #f0fdf4; }
+  .upload-zone.has-file .upload-icon { color: #16a34a; }
+
+  /* Status / parsing */
+  .status-box { background: #f8f8f8; border-radius: 8px; padding: 14px 16px; font-size: 13px; color: #555; display: none; margin-top: 16px; display: flex; align-items: center; gap: 10px; }
+  .status-box.visible { display: flex; }
+  .spinner { width: 18px; height: 18px; border: 2px solid #e5e5e5; border-top-color: #e63946; border-radius: 50%; animation: spin .7s linear infinite; flex-shrink: 0; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Preview */
+  .preview-section { display: none; }
+  .preview-section.visible { display: block; }
+  .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+  .info-field { display: flex; flex-direction: column; gap: 5px; }
+  .info-field label { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: .5px; }
+  .info-field span { font-size: 14px; font-weight: 500; color: #1a1a1a; }
+  .info-field input, .info-field select { padding: 9px 12px; border-radius: 8px; border: 1px solid #e5e5e5; font-size: 14px; background: #fafafa; color: #1a1a1a; width: 100%; }
+  .info-field input:focus { outline: none; border-color: #e63946; }
+
+  /* Items table */
+  .items-header { display: grid; grid-template-columns: 2fr 70px 110px 110px 36px; gap: 8px; padding-bottom: 8px; border-bottom: 1px solid #f0f0f0; margin-bottom: 8px; }
+  .items-header span { font-size: 12px; color: #888; }
+  .item-row { display: grid; grid-template-columns: 2fr 70px 110px 110px 36px; gap: 8px; align-items: center; margin-bottom: 8px; }
+  .item-row select, .item-row input { padding: 8px 10px; border-radius: 8px; border: 1px solid #e5e5e5; font-size: 13px; background: #fafafa; width: 100%; }
+  .item-row select:focus, .item-row input:focus { outline: none; border-color: #e63946; }
+  .remove-btn { background: none; border: none; color: #ccc; cursor: pointer; padding: 6px; border-radius: 6px; font-size: 20px; line-height: 1; }
+  .remove-btn:hover { color: #e63946; }
+  .add-item-btn { background: none; border: 1px dashed #e5e5e5; color: #888; padding: 8px 16px; border-radius: 8px; cursor: pointer; font-size: 13px; width: 100%; margin-top: 4px; }
+  .add-item-btn:hover { border-color: #e63946; color: #e63946; }
+
+  /* Warning badge for unmatched items */
+  .badge-warn { display: inline-flex; align-items: center; gap: 4px; background: #fff7ed; color: #ea580c; font-size: 11px; padding: 2px 8px; border-radius: 20px; margin-left: 6px; }
+
+  .totals { background: #fafafa; border-radius: 8px; padding: 16px; margin-top: 16px; }
+  .total-row { display: flex; justify-content: space-between; font-size: 14px; padding: 4px 0; color: #666; }
+  .total-row.grand { font-size: 18px; font-weight: 600; color: #1a1a1a; border-top: 1px solid #e5e5e5; margin-top: 8px; padding-top: 12px; }
+
+  .btn-red { background: #e63946; color: white; border: none; padding: 16px 20px; border-radius: 8px; font-size: 16px; font-weight: 500; cursor: pointer; width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; }
+  .btn-red:hover { background: #c1121f; }
+  .btn-red:disabled { background: #ccc; cursor: not-allowed; }
+
+  .success-banner { background: #1a1a1a; color: white; border-radius: 12px; padding: 24px; text-align: center; margin-top: 16px; display: none; }
+  .success-banner.visible { display: block; }
+  .success-banner h3 { font-size: 18px; font-weight: 500; margin-bottom: 8px; }
+  .success-banner p { font-size: 14px; color: #aaa; }
+  .success-banner a { color: #e63946; }
+
+  .error-box { background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 14px 16px; font-size: 13px; color: #dc2626; display: none; margin-top: 12px; }
+  .error-box.visible { display: block; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <div class="logo-text">Phil <span>&</span> Fred</div>
+    <div class="sub">Pizzeria · Import Bon de Commande</div>
+  </div>
+  <a href="/" class="back-btn"><i class="ti ti-arrow-left"></i> Retour</a>
+</div>
+
+<div class="container">
+
+  <div class="card">
+    <div class="section-title">Bon de commande PDF</div>
+    <div class="upload-zone" id="upload-zone">
+      <input type="file" accept=".pdf" id="pdf-input" onchange="handleFile(this.files[0])" />
+      <div class="upload-icon"><i class="ti ti-file-type-pdf"></i></div>
+      <h3>Glisse le PDF ici ou clique pour choisir</h3>
+      <p>Bon de commande Pasquier (St-Jean ou Delson)</p>
+    </div>
+    <div class="status-box" id="status-box">
+      <div class="spinner"></div>
+      <span id="status-text">Lecture du PDF en cours...</span>
+    </div>
+    <div class="error-box" id="error-box"></div>
+  </div>
+
+  <div class="preview-section" id="preview-section">
+
+    <div class="card">
+      <div class="section-title">Informations extraites</div>
+      <div class="info-grid">
+        <div class="info-field">
+          <label>Client</label>
+          <select id="client-select">
+            <option value="">— Sélectionner —</option>
+          </select>
+        </div>
+        <div class="info-field">
+          <label>Bon de commande #</label>
+          <input type="text" id="po-number" placeholder="ex: 00535911" />
+        </div>
+        <div class="info-field">
+          <label>Date de la facture</label>
+          <input type="date" id="invoice-date" />
+        </div>
+        <div class="info-field">
+          <label>Date d'échéance</label>
+          <input type="date" id="due-date" />
+        </div>
+        <div class="info-field">
+          <label>Numéro de facture QB</label>
+          <input type="text" id="ref-num" placeholder="ex: 1234" />
+        </div>
+        <div class="info-field">
+          <label>Note</label>
+          <input type="text" id="note" placeholder="ex: Bon de commande #00535911" />
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">Items</div>
+      <div class="items-header">
+        <span>Produit QB</span><span>Caisses</span><span>Prix unit.</span><span>Taxe</span><span></span>
+      </div>
+      <div id="items-list"></div>
+      <button class="add-item-btn" onclick="addEmptyItem()">
+        <i class="ti ti-plus"></i> Ajouter un item
+      </button>
+      <div class="totals">
+        <div class="total-row grand"><span>Sous-total</span><span id="subtotal">0,00 $</span></div>
+      </div>
+    </div>
+
+    <button class="btn-red" id="create-btn" onclick="createInvoice()">
+      <i class="ti ti-file-invoice"></i> Créer la facture dans QuickBooks
+    </button>
+
+    <div class="success-banner" id="success-banner">
+      <div style="font-size:40px;color:#4ade80;margin-bottom:8px;"><i class="ti ti-circle-check"></i></div>
+      <h3>Facture créée avec succès !</h3>
+      <p>La facture apparaît maintenant dans ton QuickBooks.<br>
+      <a href="#" id="qb-link" target="_blank">Voir dans QuickBooks →</a></p>
+      <button onclick="resetAll()" style="margin-top:16px;background:#e63946;color:white;border:none;padding:10px 20px;border-radius:8px;cursor:pointer;font-size:14px;">
+        Importer un autre bon
+      </button>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ── Mapping: mots-clés du PDF → nom exact dans QuickBooks ──────────────────
+// On cherche ces mots-clés (lowercase) dans la description du PDF
+const PRODUCT_MAPPING = [
+  { keywords: ['méditerranéenne', 'mediterraneenne', 'mediterran'], qbName: 'CAISSE 8X MÉDITERRANÉENNE' },
+  { keywords: ['margherita', 'marguerita'], qbName: 'CAISSE 8X MARGHERITA' },
+  { keywords: ['pâte à pizza', 'pate a pizza', 'boule de pâte', 'boule de pate', '12 pouces'], qbName: 'CAISSE BOULE DE PÂTE (20x unités)' },
+  { keywords: ['bambino'], qbName: 'CAISSE 12x BAMBINO TOUTE GARNIE' },
+  { keywords: ['toute garnie', 'pepperoni-bacon', 'pepperoni bacon'], qbName: 'CAISSE 8x TOUTE GARNIE' },
+];
+
+// Clients Pasquier dans QuickBooks (DisplayName exact)
+const PASQUIER_CLIENTS = [
+  { label: 'Pasquier St-Jean-sur-Richelieu', search: 'Pasquier St-Jean' },
+  { label: 'Pasquier Delson', search: 'Pasquier Delson' },
+];
+
+let qbProducts = [];
+let qbClients = {};
+let parsedItems = [];
+let itemCount = 0;
+
+// ── Init ───────────────────────────────────────────────────────────────────
+async function init() {
+  // Load QB products
+  try {
+    const res = await fetch('/api/qb', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: 'SELECT * FROM Item WHERE Active=true MAXRESULTS 200' })
+    });
+    const data = await res.json();
+    qbProducts = (data.QueryResponse?.Item || []).filter(i => ['Service','Inventory','NonInventory'].includes(i.Type));
+  } catch(e) { console.error('Could not load QB products', e); }
+
+  // Load Pasquier clients from QB
+  const sel = document.getElementById('client-select');
+  for (const c of PASQUIER_CLIENTS) {
+    try {
+      const res = await fetch('/api/qb', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: `SELECT * FROM Customer WHERE DisplayName LIKE '%${c.search}%' MAXRESULTS 3` })
+      });
+      const data = await res.json();
+      const customers = data.QueryResponse?.Customer || [];
+      customers.forEach(cust => {
+        qbClients[cust.Id] = cust.DisplayName;
+        const opt = document.createElement('option');
+        opt.value = cust.Id;
+        opt.textContent = cust.DisplayName;
+        sel.appendChild(opt);
+      });
+    } catch(e) {}
+  }
+
+  // Next invoice number
+  fetch('/api/next-invoice-number')
+    .then(r => r.json())
+    .then(d => { if (d.nextNumber) document.getElementById('ref-num').value = d.nextNumber; })
+    .catch(() => {});
+
+  // Default dates
+  const today = new Date();
+  document.getElementById('invoice-date').value = today.toISOString().split('T')[0];
+  const due = new Date();
+  due.setDate(due.getDate() + 30);
+  document.getElementById('due-date').value = due.toISOString().split('T')[0];
+
+  // Drag and drop
+  const zone = document.getElementById('upload-zone');
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragover'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+  zone.addEventListener('drop', e => { e.preventDefault(); zone.classList.remove('dragover'); if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]); });
+}
+
+// ── Handle PDF upload ──────────────────────────────────────────────────────
+async function handleFile(file) {
+  if (!file || file.type !== 'application/pdf') {
+    showError('Veuillez choisir un fichier PDF valide.');
+    return;
+  }
+
+  // Update upload zone UI
+  const zone = document.getElementById('upload-zone');
+  zone.classList.add('has-file');
+  zone.querySelector('h3').textContent = file.name;
+  zone.querySelector('p').textContent = `${(file.size / 1024).toFixed(0)} KB`;
+
+  showStatus('Lecture du PDF avec Claude AI...');
+  hideError();
+
+  // Convert PDF to base64
+  const base64 = await fileToBase64(file);
+
+  // Call Claude API to extract order data
+  try {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1000,
+        messages: [{
+          role: 'user',
+          content: [
+            {
+              type: 'document',
+              source: { type: 'base64', media_type: 'application/pdf', data: base64 }
+            },
+            {
+              type: 'text',
+              text: `Extract the purchase order data from this PDF. Return ONLY a valid JSON object (no markdown, no backticks) with this exact structure:
+{
+  "po_number": "the purchase order number (BON DE COMMANDE #)",
+  "supplier_name": "the store/magasin name",
+  "delivery_date": "YYYY-MM-DD format of the planned delivery date",
+  "items": [
+    {
+      "description": "full product description from the PDF",
+      "cases": number of cases ordered (the Cs. column),
+      "units_per_case": number (extract from description like 8/912gr means 8)
+    }
+  ]
+}
+Return only the JSON, nothing else.`
+            }
+          ]
+        }]
+      })
+    });
+
+    const data = await response.json();
+    const text = data.content?.[0]?.text || '';
+
+    let parsed;
+    try {
+      parsed = JSON.parse(text.trim());
+    } catch(e) {
+      // Try to extract JSON from response
+      const match = text.match(/\{[\s\S]*\}/);
+      if (match) parsed = JSON.parse(match[0]);
+      else throw new Error('Impossible de lire la réponse de Claude.');
+    }
+
+    hideStatus();
+    buildPreview(parsed);
+
+  } catch(e) {
+    hideStatus();
+    showError('Erreur lors de la lecture du PDF : ' + e.message);
+  }
+}
+
+// ── Build preview from parsed data ────────────────────────────────────────
+function buildPreview(parsed) {
+  // PO number → note and ref
+  if (parsed.po_number) {
+    document.getElementById('po-number').value = parsed.po_number;
+    document.getElementById('note').value = `Bon de commande #${parsed.po_number}`;
+  }
+
+  // Delivery date → invoice date
+  if (parsed.delivery_date) {
+    document.getElementById('invoice-date').value = parsed.delivery_date;
+    const due = new Date(parsed.delivery_date);
+    due.setDate(due.getDate() + 30);
+    document.getElementById('due-date').value = due.toISOString().split('T')[0];
+  }
+
+  // Auto-select client based on supplier name
+  const supplierName = (parsed.supplier_name || '').toLowerCase();
+  const clientSel = document.getElementById('client-select');
+  for (const opt of clientSel.options) {
+    if (opt.textContent.toLowerCase().includes('st-jean') && supplierName.includes('st-jean')) {
+      clientSel.value = opt.value; break;
+    }
+    if (opt.textContent.toLowerCase().includes('delson') && supplierName.includes('delson')) {
+      clientSel.value = opt.value; break;
+    }
+  }
+
+  // Build items
+  const list = document.getElementById('items-list');
+  list.innerHTML = '';
+  itemCount = 0;
+
+  (parsed.items || []).forEach(item => {
+    const matched = matchProduct(item.description);
+    addItemRow(matched?.qbProduct || null, item.cases, !matched);
+  });
+
+  document.getElementById('preview-section').classList.add('visible');
+  recalc();
+  // Scroll to preview
+  document.getElementById('preview-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// ── Match PDF description to QB product ───────────────────────────────────
+function matchProduct(description) {
+  const desc = (description || '').toLowerCase();
+  for (const mapping of PRODUCT_MAPPING) {
+    if (mapping.keywords.some(k => desc.includes(k))) {
+      const qbProduct = qbProducts.find(p => p.Name === mapping.qbName);
+      return { mapping, qbProduct };
+    }
+  }
+  return null;
+}
+
+// ── Add item row ───────────────────────────────────────────────────────────
+function addItemRow(qbProduct, qty, unmatched = false) {
+  itemCount++;
+  const id = 'item-' + itemCount;
+  const div = document.createElement('div');
+  div.className = 'item-row';
+  div.id = id;
+
+  const price = qbProduct ? (qbProduct.UnitPrice || 0) : 0;
+  const selectedId = qbProduct ? qbProduct.Id : '';
+
+  div.innerHTML = `
+    <select class="product-select" onchange="onProductChange(this,'${id}')">
+      <option value="">— Choisir un produit —</option>
+      ${qbProducts.map(p => `<option value="${p.Id}" data-price="${p.UnitPrice||0}" ${p.Id === selectedId ? 'selected' : ''}>${p.Name}</option>`).join('')}
+    </select>
+    <input type="number" class="qty-input" value="${qty || 1}" min="1" onchange="recalc()" />
+    <input type="number" class="price-input" value="${price.toFixed(2)}" step="0.01" onchange="recalc()" />
+    <select class="tax-select" style="padding:8px 6px;border-radius:8px;border:1px solid #e5e5e5;font-size:12px;background:#fafafa;width:100%;">
+      <option value="3" selected>Exonéré</option>
+      <option value="8">TPS/TVQ QC (14.975%)</option>
+      <option value="5">TPS (5%)</option>
+      <option value="9">TVQ QC (9.975%)</option>
+      <option value="4">Détaxé</option>
+      <option value="2">Hors champ</option>
+    </select>
+    <button class="remove-btn" onclick="removeItem('${id}')">×</button>`;
+
+  if (unmatched) {
+    const warn = document.createElement('div');
+    warn.style.cssText = 'grid-column:1/-1;font-size:12px;color:#ea580c;background:#fff7ed;padding:6px 10px;border-radius:6px;margin-bottom:4px;';
+    warn.innerHTML = '⚠️ Produit non reconnu automatiquement — sélectionne-le manuellement.';
+    document.getElementById('items-list').appendChild(warn);
+  }
+
+  document.getElementById('items-list').appendChild(div);
+}
+
+function addEmptyItem() {
+  addItemRow(null, 1, false);
+  recalc();
+}
+
+function onProductChange(sel, rowId) {
+  const price = parseFloat(sel.options[sel.selectedIndex].getAttribute('data-price')) || 0;
+  document.getElementById(rowId).querySelector('.price-input').value = price.toFixed(2);
+  recalc();
+}
+
+function removeItem(id) {
+  document.getElementById(id)?.remove();
+  recalc();
+}
+
+function recalc() {
+  let sub = 0;
+  document.querySelectorAll('.item-row').forEach(row => {
+    sub += (parseFloat(row.querySelector('.qty-input')?.value)||0) * (parseFloat(row.querySelector('.price-input')?.value)||0);
+  });
+  document.getElementById('subtotal').textContent = sub.toLocaleString('fr-CA', { style:'currency', currency:'CAD' });
+}
+
+// ── Create invoice ─────────────────────────────────────────────────────────
+async function createInvoice() {
+  const clientId = document.getElementById('client-select').value;
+  if (!clientId) { alert('Sélectionne un client (Pasquier St-Jean ou Delson).'); return; }
+
+  const lines = [];
+  let valid = true;
+  document.querySelectorAll('.item-row').forEach(row => {
+    const sel = row.querySelector('.product-select');
+    const qty = parseFloat(row.querySelector('.qty-input')?.value) || 0;
+    const price = parseFloat(row.querySelector('.price-input')?.value) || 0;
+    const taxCode = row.querySelector('.tax-select')?.value || '3';
+    if (!sel?.value || qty <= 0) { valid = false; return; }
+    const lineDetail = { ItemRef: { value: sel.value }, Qty: qty, UnitPrice: price };
+    if (taxCode !== 'NON') lineDetail.TaxCodeRef = { value: taxCode };
+    lines.push({
+      Amount: parseFloat((qty * price).toFixed(2)),
+      DetailType: 'SalesItemLineDetail',
+      SalesItemLineDetail: lineDetail
+    });
+  });
+
+  if (!valid || !lines.length) { alert('Ajoute au moins un produit valide.'); return; }
+
+  const btn = document.getElementById('create-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<i class="ti ti-loader"></i> Création en cours...';
+
+  try {
+    const res = await fetch('/api/qb-post', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        endpoint: 'invoice',
+        body: {
+          CustomerRef: { value: clientId },
+          Line: lines,
+          TxnDate: document.getElementById('invoice-date').value || undefined,
+          DueDate: document.getElementById('due-date').value || undefined,
+          DocNumber: document.getElementById('ref-num').value || undefined,
+          CustomerMemo: document.getElementById('note').value ? { value: document.getElementById('note').value } : undefined
+        }
+      })
+    });
+    const data = await res.json();
+    if (data.Invoice) {
+      document.getElementById('success-banner').classList.add('visible');
+      document.getElementById('qb-link').href = `https://app.qbo.intuit.com/app/invoice?txnId=${data.Invoice.Id}`;
+      btn.innerHTML = '<i class="ti ti-circle-check"></i> Facture créée !';
+      btn.style.background = '#15803d';
+    } else {
+      throw new Error(JSON.stringify(data));
+    }
+  } catch(e) {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="ti ti-file-invoice"></i> Créer la facture dans QuickBooks';
+    alert('Erreur : ' + e.message);
+  }
+}
+
+// ── Reset ──────────────────────────────────────────────────────────────────
+function resetAll() {
+  document.getElementById('preview-section').classList.remove('visible');
+  document.getElementById('success-banner').classList.remove('visible');
+  document.getElementById('items-list').innerHTML = '';
+  document.getElementById('pdf-input').value = '';
+  const zone = document.getElementById('upload-zone');
+  zone.classList.remove('has-file');
+  zone.querySelector('h3').textContent = 'Glisse le PDF ici ou clique pour choisir';
+  zone.querySelector('p').textContent = 'Bon de commande Pasquier (St-Jean ou Delson)';
+  const btn = document.getElementById('create-btn');
+  btn.disabled = false;
+  btn.innerHTML = '<i class="ti ti-file-invoice"></i> Créer la facture dans QuickBooks';
+  btn.style.background = '';
+  itemCount = 0;
+  fetch('/api/next-invoice-number').then(r=>r.json()).then(d=>{ if(d.nextNumber) document.getElementById('ref-num').value = d.nextNumber; }).catch(()=>{});
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+function fileToBase64(file) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result.split(',')[1]);
+    r.onerror = () => rej(new Error('Lecture du fichier échouée'));
+    r.readAsDataURL(file);
+  });
+}
+function showStatus(msg) {
+  const box = document.getElementById('status-box');
+  document.getElementById('status-text').textContent = msg;
+  box.classList.add('visible');
+}
+function hideStatus() { document.getElementById('status-box').classList.remove('visible'); }
+function showError(msg) { const b = document.getElementById('error-box'); b.textContent = msg; b.classList.add('visible'); }
+function hideError() { document.getElementById('error-box').classList.remove('visible'); }
+
+init();
+</script>
+</body>
+</html>
