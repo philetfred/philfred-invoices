@@ -1,10 +1,36 @@
 const express = require('express');
 const fetch = require('node-fetch');
 const path = require('path');
+const { MongoClient } = require('mongodb');
 
 const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname)));
+
+// ─── MongoDB Connection ───────────────────────────────────────────────────────
+const MONGODB_URI = process.env.MONGODB_URI;
+let db = null;
+
+async function connectMongo() {
+  if (!MONGODB_URI) {
+    console.log('No MONGODB_URI set, using in-memory price rules');
+    return;
+  }
+  try {
+    const client = new MongoClient(MONGODB_URI);
+    await client.connect();
+    db = client.db('philfred');
+    console.log('Connected to MongoDB');
+    // Initialize price rules in DB if empty
+    const count = await db.collection('priceRules').countDocuments();
+    if (count === 0) {
+      await db.collection('priceRules').insertMany(defaultPriceRules);
+      console.log('Price rules initialized in MongoDB');
+    }
+  } catch(err) {
+    console.error('MongoDB connection error:', err);
+  }
+}
 
 // Config — ces valeurs viennent des variables d'environnement Render
 const CLIENT_ID = process.env.QB_CLIENT_ID;
@@ -113,7 +139,7 @@ app.get('/api/customer/:id', async (req, res) => {
 
 // ─── Price Rules Storage ──────────────────────────────────────────────────────
 
-let priceRules = [
+const defaultPriceRules = [
   // 20% de marge
   { name: 'IGA extra Super Marché Famille Primeau inc. Beauharnois', type: 'percent', value: -20 },
   { name: 'IGA extra Super Marché Primeau et fils inc.', type: 'percent', value: -20 },
@@ -165,27 +191,65 @@ let priceRules = [
   { name: 'super_c_pattern', type: 'pattern_fixed', value: -8, pattern: 'super c' }
 ];
 
-app.get('/api/price-rules', (req, res) => {
-  res.json(priceRules);
+let priceRules = [...defaultPriceRules];
+
+app.get('/api/price-rules', async (req, res) => {
+  try {
+    if (db) {
+      const rules = await db.collection('priceRules').find({}, { projection: { _id: 0 } }).toArray();
+      return res.json(rules);
+    }
+    res.json(priceRules);
+  } catch(err) {
+    res.json(priceRules);
+  }
 });
 
-app.post('/api/price-rules', (req, res) => {
-  priceRules = req.body;
-  res.json({ success: true });
+app.post('/api/price-rules', async (req, res) => {
+  try {
+    if (db) {
+      await db.collection('priceRules').deleteMany({});
+      if (req.body.length > 0) await db.collection('priceRules').insertMany(req.body);
+    } else {
+      priceRules = req.body;
+    }
+    res.json({ success: true });
+  } catch(err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-app.post('/api/price-rules/add', (req, res) => {
+app.post('/api/price-rules/add', async (req, res) => {
   const rule = req.body;
-  // Remove existing rule for same client
-  priceRules = priceRules.filter(r => r.name.toLowerCase() !== rule.name.toLowerCase());
-  priceRules.push(rule);
-  res.json({ success: true });
+  try {
+    if (db) {
+      await db.collection('priceRules').deleteOne({ name: new RegExp('^' + rule.name + '$', 'i') });
+      await db.collection('priceRules').insertOne(rule);
+    } else {
+      priceRules = priceRules.filter(r => r.name.toLowerCase() !== rule.name.toLowerCase());
+      priceRules.push(rule);
+    }
+    res.json({ success: true });
+  } catch(err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-app.delete('/api/price-rules/:index', (req, res) => {
+app.delete('/api/price-rules/:index', async (req, res) => {
   const index = parseInt(req.params.index);
-  priceRules.splice(index, 1);
-  res.json({ success: true });
+  try {
+    if (db) {
+      const rules = await db.collection('priceRules').find({}, { projection: { _id: 0 } }).toArray();
+      if (rules[index]) {
+        await db.collection('priceRules').deleteOne({ name: rules[index].name });
+      }
+    } else {
+      priceRules.splice(index, 1);
+    }
+    res.json({ success: true });
+  } catch(err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ─── Tax Codes ────────────────────────────────────────────────────────────────
@@ -388,4 +452,6 @@ app.get('*', (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Phil & Fred Invoice App running on port ${PORT}`));
+connectMongo().then(() => {
+  app.listen(PORT, () => console.log(`Phil & Fred Invoice App running on port ${PORT}`));
+});
