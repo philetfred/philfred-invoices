@@ -1,10 +1,29 @@
 const express = require('express');
 const fetch = require('node-fetch');
 const path = require('path');
+const crypto = require('crypto');
 const { MongoClient } = require('mongodb');
 
 const app = express();
 app.use(express.json());
+
+// ─── Simple cookie parser (no dependency needed) ───────────────────────────────
+app.use((req, res, next) => {
+  req.cookies = {};
+  const header = req.headers.cookie;
+  if (header) {
+    header.split(';').forEach(pair => {
+      const idx = pair.indexOf('=');
+      if (idx > -1) {
+        const key = pair.slice(0, idx).trim();
+        const val = pair.slice(idx + 1).trim();
+        req.cookies[key] = decodeURIComponent(val);
+      }
+    });
+  }
+  next();
+});
+
 app.use(express.static(path.join(__dirname)));
 
 // ─── MongoDB Connection ───────────────────────────────────────────────────────
@@ -17,7 +36,11 @@ async function connectMongo() {
     return;
   }
   try {
-    const client = new MongoClient(MONGODB_URI);
+    const client = new MongoClient(MONGODB_URI, {
+      tls: true,
+      tlsAllowInvalidCertificates: true,
+      serverSelectionTimeoutMS: 10000
+    });
     await client.connect();
     db = client.db('philfred');
     console.log('Connected to MongoDB');
@@ -32,33 +55,71 @@ async function connectMongo() {
   }
 }
 
+// ─── Session Management (multi-utilisateur) ────────────────────────────────────
+// Chaque navigateur a un cookie 'sessionId' unique. Les tokens QuickBooks
+// sont stockés dans MongoDB, indexés par sessionId, pour permettre à
+// plusieurs personnes de se connecter avec leur propre compte QB en même temps.
+
+function getOrCreateSessionId(req, res) {
+  let sessionId = req.cookies.sessionId;
+  if (!sessionId) {
+    sessionId = crypto.randomBytes(24).toString('hex');
+    res.setHeader('Set-Cookie', `sessionId=${sessionId}; HttpOnly; Path=/; Max-Age=2592000; SameSite=Lax`);
+  }
+  return sessionId;
+}
+
+async function saveSessionToken(sessionId, tokenData) {
+  if (db) {
+    await db.collection('sessions').updateOne(
+      { sessionId },
+      { $set: { ...tokenData, sessionId, updatedAt: new Date() } },
+      { upsert: true }
+    );
+  } else {
+    memorySessions[sessionId] = tokenData;
+  }
+}
+
+async function getSessionToken(sessionId) {
+  if (db) {
+    return await db.collection('sessions').findOne({ sessionId });
+  }
+  return memorySessions[sessionId] || null;
+}
+
+// Fallback en mémoire si MongoDB n'est pas connecté
+const memorySessions = {};
+
 // Config — ces valeurs viennent des variables d'environnement Render
 const CLIENT_ID = process.env.QB_CLIENT_ID;
 const CLIENT_SECRET = process.env.QB_CLIENT_SECRET;
 const REDIRECT_URI = process.env.QB_REDIRECT_URI || 'https://philfred-invoices.onrender.com/callback';
 
-// Store tokens en mémoire (simple pour usage solo)
-let tokenStore = {
-  accessToken: null,
-  refreshToken: null,
-  realmId: null,
-  expiresAt: null
-};
-
 // ─── OAuth Flow ───────────────────────────────────────────────────────────────
 
 // Step 1: Redirect to QuickBooks login
 app.get('/auth', (req, res) => {
+  const sessionId = getOrCreateSessionId(req, res);
   const scope = 'com.intuit.quickbooks.accounting';
-  const state = Math.random().toString(36).substring(7);
+  // On encode le sessionId dans le state pour le retrouver au callback
+  const state = sessionId + '.' + Math.random().toString(36).substring(7);
   const authUrl = `https://appcenter.intuit.com/connect/oauth2?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=code&scope=${scope}&state=${state}&prompt=select_account`;
   res.redirect(authUrl);
 });
 
 // Step 2: QuickBooks redirects back here with code
 app.get('/callback', async (req, res) => {
-  const { code, realmId } = req.query;
+  const { code, realmId, state } = req.query;
   if (!code) return res.status(400).send('No code received');
+
+  // Récupère le sessionId à partir du state, ou du cookie en fallback
+  let sessionId = state ? state.split('.')[0] : null;
+  if (!sessionId || sessionId.length !== 48) {
+    sessionId = getOrCreateSessionId(req, res);
+  } else {
+    res.setHeader('Set-Cookie', `sessionId=${sessionId}; HttpOnly; Path=/; Max-Age=2592000; SameSite=Lax`);
+  }
 
   try {
     const credentials = Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64');
@@ -74,12 +135,12 @@ app.get('/callback', async (req, res) => {
 
     const data = await response.json();
     if (data.access_token) {
-      tokenStore = {
+      await saveSessionToken(sessionId, {
         accessToken: data.access_token,
         refreshToken: data.refresh_token,
         realmId: realmId,
         expiresAt: Date.now() + (data.expires_in * 1000)
-      };
+      });
       res.redirect('/?connected=true');
     } else {
       res.redirect('/?error=auth_failed');
@@ -91,11 +152,14 @@ app.get('/callback', async (req, res) => {
 
 // ─── Token Management ─────────────────────────────────────────────────────────
 
-async function getValidToken() {
-  if (!tokenStore.accessToken) throw new Error('Not authenticated');
-  
+async function getValidToken(req, res) {
+  const sessionId = getOrCreateSessionId(req, res);
+  const session = await getSessionToken(sessionId);
+
+  if (!session || !session.accessToken) throw new Error('Not authenticated');
+
   // Refresh if expired or expiring in 5 min
-  if (Date.now() > tokenStore.expiresAt - 300000) {
+  if (Date.now() > session.expiresAt - 300000) {
     const credentials = Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64');
     const response = await fetch('https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer', {
       method: 'POST',
@@ -104,26 +168,27 @@ async function getValidToken() {
         'Content-Type': 'application/x-www-form-urlencoded',
         'Accept': 'application/json'
       },
-      body: `grant_type=refresh_token&refresh_token=${tokenStore.refreshToken}`
+      body: `grant_type=refresh_token&refresh_token=${session.refreshToken}`
     });
     const data = await response.json();
     if (data.access_token) {
-      tokenStore.accessToken = data.access_token;
-      tokenStore.refreshToken = data.refresh_token;
-      tokenStore.expiresAt = Date.now() + (data.expires_in * 1000);
+      session.accessToken = data.access_token;
+      session.refreshToken = data.refresh_token;
+      session.expiresAt = Date.now() + (data.expires_in * 1000);
+      await saveSessionToken(sessionId, session);
     } else {
-      tokenStore.accessToken = null;
+      await saveSessionToken(sessionId, { accessToken: null, refreshToken: null, realmId: null, expiresAt: null });
       throw new Error('Token refresh failed - please reconnect');
     }
   }
-  return tokenStore.accessToken;
+  return { token: session.accessToken, realmId: session.realmId };
 }
 
 // Get customer details including price rules
 app.get('/api/customer/:id', async (req, res) => {
   try {
-    const token = await getValidToken();
-    const url = `https://quickbooks.api.intuit.com/v3/company/${tokenStore.realmId}/customer/${req.params.id}?minorversion=65`;
+    const { token, realmId } = await getValidToken(req, res);
+    const url = `https://quickbooks.api.intuit.com/v3/company/${realmId}/customer/${req.params.id}?minorversion=65`;
     const response = await fetch(url, {
       headers: {
         'Authorization': 'Bearer ' + token,
@@ -256,8 +321,8 @@ app.delete('/api/price-rules/:index', async (req, res) => {
 
 app.get('/api/taxcodes', async (req, res) => {
   try {
-    const token = await getValidToken();
-    const url = `https://quickbooks.api.intuit.com/v3/company/${tokenStore.realmId}/query?query=SELECT * FROM TaxCode&minorversion=65`;
+    const { token, realmId } = await getValidToken(req, res);
+    const url = `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=SELECT * FROM TaxCode&minorversion=65`;
     const response = await fetch(url, {
       headers: {
         'Authorization': 'Bearer ' + token,
@@ -274,12 +339,12 @@ app.get('/api/taxcodes', async (req, res) => {
 // Get next invoice number (checks Invoice AND CreditMemo)
 app.get('/api/next-invoice-number', async (req, res) => {
   try {
-    const token = await getValidToken();
+    const { token, realmId } = await getValidToken(req, res);
     const headers = {
       'Authorization': 'Bearer ' + token,
       'Accept': 'application/json'
     };
-    const base = `https://quickbooks.api.intuit.com/v3/company/${tokenStore.realmId}`;
+    const base = `https://quickbooks.api.intuit.com/v3/company/${realmId}`;
     
     // Fetch invoices and credit memos in parallel
     const [invRes, cmRes] = await Promise.all([
@@ -311,10 +376,12 @@ app.get('/api/next-invoice-number', async (req, res) => {
 
 // ─── Status ───────────────────────────────────────────────────────────────────
 
-app.get('/api/status', (req, res) => {
+app.get('/api/status', async (req, res) => {
+  const sessionId = getOrCreateSessionId(req, res);
+  const session = await getSessionToken(sessionId);
   res.json({
-    connected: !!tokenStore.accessToken,
-    realmId: tokenStore.realmId
+    connected: !!(session && session.accessToken),
+    realmId: session ? session.realmId : null
   });
 });
 
@@ -323,8 +390,8 @@ app.get('/api/status', (req, res) => {
 app.post('/api/qb', async (req, res) => {
   const { query } = req.body;
   try {
-    const token = await getValidToken();
-    const url = `https://quickbooks.api.intuit.com/v3/company/${tokenStore.realmId}/query?query=${encodeURIComponent(query)}&minorversion=65`;
+    const { token, realmId } = await getValidToken(req, res);
+    const url = `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(query)}&minorversion=65`;
     const response = await fetch(url, {
       headers: {
         'Authorization': 'Bearer ' + token,
@@ -341,8 +408,8 @@ app.post('/api/qb', async (req, res) => {
 app.post('/api/qb-post', async (req, res) => {
   const { endpoint, body } = req.body;
   try {
-    const token = await getValidToken();
-    const url = `https://quickbooks.api.intuit.com/v3/company/${tokenStore.realmId}/${endpoint}?minorversion=65`;
+    const { token, realmId } = await getValidToken(req, res);
+    const url = `https://quickbooks.api.intuit.com/v3/company/${realmId}/${endpoint}?minorversion=65`;
     const response = await fetch(url, {
       method: 'POST',
       headers: {
