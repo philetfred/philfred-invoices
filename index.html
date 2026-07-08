@@ -100,6 +100,10 @@
   <button class="reconnect-btn" id="reconnect-btn" onclick="window.location.href='/auth'" style="display:none; margin-left:8px;">
     Reconnecter QuickBooks
   </button>
+  <span id="user-tag" style="margin-left:12px; font-size:12px; color:#aaa;"></span>
+  <button onclick="logout()" style="margin-left:8px; background:none; border:1px solid #444; color:#aaa; padding:6px 12px; border-radius:6px; font-size:12px; cursor:pointer;">
+    Déconnexion
+  </button>
 </div>
 
 <div class="container">
@@ -189,7 +193,25 @@ let selectedClient = null;
 let qbProducts = [];
 let itemCount = 0;
 
+async function logout() {
+  await fetch('/api/app-logout', { method: 'POST' });
+  window.location.href = '/login';
+}
+
 async function checkStatus() {
+  // Vérifier session app d'abord
+  try {
+    const appRes = await fetch('/api/app-status');
+    const appData = await appRes.json();
+    if (appData.loggedIn) {
+      document.getElementById('user-tag').textContent = '👤 ' + appData.username;
+      // Cacher admin-btn si pas admin
+      if (appData.role !== 'admin') {
+        document.getElementById('admin-btn').style.display = 'none';
+      }
+    }
+  } catch(e) {}
+
   const params = new URLSearchParams(window.location.search);
   if (params.get('error')) { showConnect(); return; }
   try {
