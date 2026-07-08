@@ -50,6 +50,12 @@ async function connectMongo() {
       await db.collection('priceRules').insertMany(defaultPriceRules);
       console.log('Price rules initialized in MongoDB');
     }
+    // Initialize app users if empty
+    const userCount = await db.collection('appUsers').countDocuments();
+    if (userCount === 0) {
+      await db.collection('appUsers').insertMany(defaultAppUsers);
+      console.log('App users initialized in MongoDB');
+    }
   } catch(err) {
     console.error('MongoDB connection error:', err);
   }
@@ -493,15 +499,136 @@ Return only the JSON, nothing else.`
   }
 });
 
-app.get('/', (req, res) => {
+// ─── App Authentication ───────────────────────────────────────────────────────
+
+const crypto_builtin = require('crypto');
+
+function hashPassword(password) {
+  return crypto_builtin.createHash('sha256').update(password).digest('hex');
+}
+
+// Default users (stored in MongoDB, initialized on first run)
+const defaultAppUsers = [
+  { username: 'Fred',  passwordHash: '7d301c9cefaf53d6f7b43a7cb228e18f8466c62f62fe87aaf621132eba509bb0', role: 'admin' },
+  { username: 'AlexB', passwordHash: 'f5286a7722c969aee390525c7309e98864bd9057b6983c600469b80d31ad4997', role: 'employe' },
+  { username: 'Alex',  passwordHash: '9b5e34a4f2d715c4ea89842da98bbeae766851584b1e746457f3b1b887d3d9be', role: 'employe' },
+  { username: 'MathA', passwordHash: 'fcf5077d5abff23bae284cdda0f2533a5d5860a9d2442943f78b603755e92bc5', role: 'employe' },
+];
+
+// Middleware — vérifie le cookie de session app (différent du token QB)
+async function requireAppAuth(req, res, next) {
+  const appSessionId = req.cookies.appSessionId;
+  if (!appSessionId) return res.redirect('/login');
+  if (db) {
+    const session = await db.collection('appSessions').findOne({ sessionId: appSessionId });
+    if (!session) return res.redirect('/login');
+    req.appUser = session;
+  }
+  next();
+}
+
+async function requireAdmin(req, res, next) {
+  const appSessionId = req.cookies.appSessionId;
+  if (!appSessionId) return res.status(401).json({ error: 'Non authentifié' });
+  if (db) {
+    const session = await db.collection('appSessions').findOne({ sessionId: appSessionId });
+    if (!session || session.role !== 'admin') return res.status(403).json({ error: 'Accès refusé' });
+    req.appUser = session;
+  }
+  next();
+}
+
+// Login page
+app.get('/login', (req, res) => {
+  res.sendFile(path.join(__dirname, 'login.html'));
+});
+
+// Login POST
+app.post('/api/app-login', async (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) return res.json({ success: false, error: 'Champs manquants' });
+
+  try {
+    const hash = hashPassword(password);
+    let user = null;
+    if (db) {
+      user = await db.collection('appUsers').findOne({ username, passwordHash: hash });
+    } else {
+      user = defaultAppUsers.find(u => u.username === username && u.passwordHash === hash);
+    }
+    if (!user) return res.json({ success: false, error: 'Nom d\'utilisateur ou mot de passe incorrect' });
+
+    // Create app session
+    const sessionId = crypto_builtin.randomBytes(24).toString('hex');
+    if (db) {
+      await db.collection('appSessions').insertOne({
+        sessionId,
+        username: user.username,
+        role: user.role,
+        createdAt: new Date()
+      });
+    }
+    res.setHeader('Set-Cookie', `appSessionId=${sessionId}; HttpOnly; Path=/; Max-Age=86400; SameSite=Lax`);
+    res.json({ success: true, role: user.role });
+  } catch(e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+// Logout
+app.post('/api/app-logout', async (req, res) => {
+  const appSessionId = req.cookies.appSessionId;
+  if (appSessionId && db) {
+    await db.collection('appSessions').deleteOne({ sessionId: appSessionId });
+  }
+  res.setHeader('Set-Cookie', 'appSessionId=; HttpOnly; Path=/; Max-Age=0');
+  res.json({ success: true });
+});
+
+// App session status
+app.get('/api/app-status', async (req, res) => {
+  const appSessionId = req.cookies.appSessionId;
+  if (!appSessionId) return res.json({ loggedIn: false });
+  if (db) {
+    const session = await db.collection('appSessions').findOne({ sessionId: appSessionId });
+    if (!session) return res.json({ loggedIn: false });
+    return res.json({ loggedIn: true, username: session.username, role: session.role });
+  }
+  res.json({ loggedIn: false });
+});
+
+// User management (admin only)
+app.get('/api/app-users', requireAdmin, async (req, res) => {
+  if (!db) return res.json([]);
+  const users = await db.collection('appUsers').find({}, { projection: { passwordHash: 0 } }).toArray();
+  res.json(users);
+});
+
+app.post('/api/app-users/add', requireAdmin, async (req, res) => {
+  const { username, password, role } = req.body;
+  if (!username || !password || !role) return res.status(400).json({ error: 'Champs manquants' });
+  const passwordHash = hashPassword(password);
+  if (db) {
+    await db.collection('appUsers').deleteOne({ username });
+    await db.collection('appUsers').insertOne({ username, passwordHash, role });
+  }
+  res.json({ success: true });
+});
+
+app.delete('/api/app-users/:username', requireAdmin, async (req, res) => {
+  if (db) await db.collection('appUsers').deleteOne({ username: req.params.username });
+  res.json({ success: true });
+});
+
+app.get('/', requireAppAuth, (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-app.get('/admin', (req, res) => {
+app.get('/admin', requireAppAuth, (req, res) => {
   res.sendFile(path.join(__dirname, 'admin.html'));
 });
 
-app.get('/import', (req, res) => {
+app.get('/import', requireAppAuth, (req, res) => {
   res.sendFile(path.join(__dirname, 'import.html'));
 });
 
