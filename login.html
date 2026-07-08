@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Phil & Fred — Connexion</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #1a1a1a; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+  .login-card { background: white; border-radius: 16px; padding: 40px 36px; width: 100%; max-width: 380px; box-shadow: 0 20px 60px rgba(0,0,0,0.4); }
+  .logo { text-align: center; margin-bottom: 32px; }
+  .logo-text { font-size: 28px; font-weight: 600; color: #1a1a1a; }
+  .logo-text span { color: #e63946; }
+  .logo-sub { font-size: 11px; color: #aaa; letter-spacing: 2px; text-transform: uppercase; margin-top: 4px; }
+  .field { margin-bottom: 16px; }
+  .field label { display: block; font-size: 12px; color: #666; margin-bottom: 6px; font-weight: 500; }
+  .field input { width: 100%; padding: 12px 14px; border-radius: 8px; border: 1px solid #e5e5e5; font-size: 15px; background: #fafafa; color: #1a1a1a; transition: border-color .2s; }
+  .field input:focus { outline: none; border-color: #e63946; background: white; }
+  .btn-login { width: 100%; background: #e63946; color: white; border: none; padding: 14px; border-radius: 8px; font-size: 16px; font-weight: 600; cursor: pointer; margin-top: 8px; transition: background .2s; }
+  .btn-login:hover { background: #c1121f; }
+  .btn-login:disabled { background: #ccc; cursor: not-allowed; }
+  .error { background: #fef2f2; border: 1px solid #fecaca; color: #dc2626; border-radius: 8px; padding: 10px 14px; font-size: 13px; margin-top: 12px; display: none; }
+  .error.visible { display: block; }
+</style>
+</head>
+<body>
+<div class="login-card">
+  <div class="logo">
+    <div class="logo-text">Phil <span>&</span> Fred</div>
+    <div class="logo-sub">Pizzeria · Facturation</div>
+  </div>
+  <div class="field">
+    <label>Nom d'utilisateur</label>
+    <input type="text" id="username" placeholder="ex: Fred" onkeydown="if(event.key==='Enter') login()" autocomplete="username" />
+  </div>
+  <div class="field">
+    <label>Mot de passe</label>
+    <input type="password" id="password" placeholder="••••••••" onkeydown="if(event.key==='Enter') login()" autocomplete="current-password" />
+  </div>
+  <button class="btn-login" id="login-btn" onclick="login()">Se connecter</button>
+  <div class="error" id="error-msg"></div>
+</div>
+
+<script>
+async function login() {
+  const username = document.getElementById('username').value.trim();
+  const password = document.getElementById('password').value;
+  const btn = document.getElementById('login-btn');
+  const err = document.getElementById('error-msg');
+
+  if (!username || !password) {
+    err.textContent = 'Veuillez entrer votre nom et mot de passe.';
+    err.classList.add('visible');
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Connexion...';
+  err.classList.remove('visible');
+
+  try {
+    const res = await fetch('/api/app-login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+    const data = await res.json();
+    if (data.success) {
+      window.location.href = '/';
+    } else {
+      err.textContent = data.error || 'Erreur de connexion.';
+      err.classList.add('visible');
+      btn.disabled = false;
+      btn.textContent = 'Se connecter';
+    }
+  } catch(e) {
+    err.textContent = 'Erreur réseau, réessaie.';
+    err.classList.add('visible');
+    btn.disabled = false;
+    btn.textContent = 'Se connecter';
+  }
+}
+
+// Si déjà connecté, redirige vers l'app
+fetch('/api/app-status').then(r => r.json()).then(d => {
+  if (d.loggedIn) window.location.href = '/';
+});
+</script>
+</body>
+</html>
