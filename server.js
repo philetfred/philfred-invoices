@@ -30,6 +30,14 @@ app.use(express.static(path.join(__dirname)));
 const MONGODB_URI = process.env.MONGODB_URI;
 let db = null;
 
+// Default users (stored in MongoDB, initialized on first run)
+const defaultAppUsers = [
+  { username: 'Fred',  passwordHash: '7d301c9cefaf53d6f7b43a7cb228e18f8466c62f62fe87aaf621132eba509bb0', role: 'admin' },
+  { username: 'AlexB', passwordHash: 'f5286a7722c969aee390525c7309e98864bd9057b6983c600469b80d31ad4997', role: 'employe' },
+  { username: 'Alex',  passwordHash: '9b5e34a4f2d715c4ea89842da98bbeae766851584b1e746457f3b1b887d3d9be', role: 'employe' },
+  { username: 'MathA', passwordHash: 'fcf5077d5abff23bae284cdda0f2533a5d5860a9d2442943f78b603755e92bc5', role: 'employe' },
+];
+
 async function connectMongo() {
   if (!MONGODB_URI) {
     console.log('No MONGODB_URI set, using in-memory price rules');
@@ -56,6 +64,9 @@ async function connectMongo() {
       await db.collection('appUsers').insertMany(defaultAppUsers);
       console.log('App users initialized in MongoDB');
     }
+    // Create index on appSessions for faster lookup
+    await db.collection('appSessions').createIndex({ sessionId: 1 });
+    await db.collection('appUsers').createIndex({ username: 1 });
   } catch(err) {
     console.error('MongoDB connection error:', err);
   }
@@ -506,14 +517,6 @@ const crypto_builtin = require('crypto');
 function hashPassword(password) {
   return crypto_builtin.createHash('sha256').update(password).digest('hex');
 }
-
-// Default users (stored in MongoDB, initialized on first run)
-const defaultAppUsers = [
-  { username: 'Fred',  passwordHash: '7d301c9cefaf53d6f7b43a7cb228e18f8466c62f62fe87aaf621132eba509bb0', role: 'admin' },
-  { username: 'AlexB', passwordHash: 'f5286a7722c969aee390525c7309e98864bd9057b6983c600469b80d31ad4997', role: 'employe' },
-  { username: 'Alex',  passwordHash: '9b5e34a4f2d715c4ea89842da98bbeae766851584b1e746457f3b1b887d3d9be', role: 'employe' },
-  { username: 'MathA', passwordHash: 'fcf5077d5abff23bae284cdda0f2533a5d5860a9d2442943f78b603755e92bc5', role: 'employe' },
-];
 
 // Middleware — vérifie le cookie de session app (différent du token QB)
 async function requireAppAuth(req, res, next) {
