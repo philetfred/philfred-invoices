@@ -99,6 +99,34 @@
     <div id="rules-list"></div>
   </div>
 
+  <div class="card">
+    <div class="section-title">Gestion des utilisateurs</div>
+    <div class="info-box">
+      <i class="ti ti-info-circle"></i> Ajoute ou supprime des utilisateurs de l'app Phil & Fred. Les mots de passe sont chiffrés.
+    </div>
+    <div class="add-form" style="display:grid; grid-template-columns:1fr 1fr 1fr auto; gap:10px; align-items:end; margin-bottom:20px;">
+      <div class="field">
+        <label>Nom d'utilisateur</label>
+        <input type="text" id="new-username" placeholder="ex: Simon" />
+      </div>
+      <div class="field">
+        <label>Mot de passe</label>
+        <input type="password" id="new-password" placeholder="••••••••" />
+      </div>
+      <div class="field">
+        <label>Rôle</label>
+        <select id="new-role">
+          <option value="employe">Employé</option>
+          <option value="admin">Admin</option>
+        </select>
+      </div>
+      <button class="btn-red" onclick="addUser()">
+        <i class="ti ti-plus"></i> Ajouter
+      </button>
+    </div>
+    <div id="users-list"></div>
+  </div>
+
 </div>
 
 <script>
@@ -254,6 +282,60 @@ async function renderRules() {
 }
 
 renderRules();
+renderUsers();
+
+async function addUser() {
+  const username = document.getElementById('new-username').value.trim();
+  const password = document.getElementById('new-password').value;
+  const role = document.getElementById('new-role').value;
+  if (!username || !password) { alert('Remplis tous les champs.'); return; }
+  try {
+    const res = await fetch('/api/app-users/add', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password, role })
+    });
+    const data = await res.json();
+    if (data.success) {
+      document.getElementById('new-username').value = '';
+      document.getElementById('new-password').value = '';
+      await renderUsers();
+      alert('✅ Utilisateur ajouté !');
+    } else {
+      alert('Erreur : ' + (data.error || 'Inconnue'));
+    }
+  } catch(e) {
+    alert('Erreur réseau.');
+  }
+}
+
+async function deleteUser(username) {
+  if (!confirm('Supprimer ' + username + ' ?')) return;
+  await fetch('/api/app-users/' + encodeURIComponent(username), { method: 'DELETE' });
+  await renderUsers();
+}
+
+async function renderUsers() {
+  try {
+    const res = await fetch('/api/app-users');
+    if (!res.ok) return; // Pas admin, on cache la section
+    const users = await res.json();
+    const div = document.getElementById('users-list');
+    if (!users.length) { div.innerHTML = '<div class="empty">Aucun utilisateur</div>'; return; }
+    div.innerHTML = \`
+      <table class="rules-table">
+        <thead><tr><th>Utilisateur</th><th>Rôle</th><th></th></tr></thead>
+        <tbody>
+          \${users.map(u => \`
+            <tr>
+              <td>\${u.username}</td>
+              <td><span class="badge \${u.role === 'admin' ? 'badge-orange' : 'badge-fixed'}">\${u.role === 'admin' ? 'Admin' : 'Employé'}</span></td>
+              <td><button class="delete-btn" onclick="deleteUser('\${u.username}')">×</button></td>
+            </tr>\`).join('')}
+        </tbody>
+      </table>\`;
+  } catch(e) {}
+}
 </script>
 </body>
 </html>
