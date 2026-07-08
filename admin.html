@@ -318,23 +318,22 @@ async function deleteUser(username) {
 async function renderUsers() {
   try {
     const res = await fetch('/api/app-users');
-    if (!res.ok) return; // Pas admin, on cache la section
+    if (!res.ok) return;
     const users = await res.json();
     const div = document.getElementById('users-list');
     if (!users.length) { div.innerHTML = '<div class="empty">Aucun utilisateur</div>'; return; }
-    div.innerHTML = \`
-      <table class="rules-table">
-        <thead><tr><th>Utilisateur</th><th>Rôle</th><th></th></tr></thead>
-        <tbody>
-          \${users.map(u => \`
-            <tr>
-              <td>\${u.username}</td>
-              <td><span class="badge \${u.role === 'admin' ? 'badge-orange' : 'badge-fixed'}">\${u.role === 'admin' ? 'Admin' : 'Employé'}</span></td>
-              <td><button class="delete-btn" onclick="deleteUser('\${u.username}')">×</button></td>
-            </tr>\`).join('')}
-        </tbody>
-      </table>\`;
-  } catch(e) {}
+    let rows = '';
+    users.forEach(function(u) {
+      const badgeClass = u.role === 'admin' ? 'badge-orange' : 'badge-fixed';
+      const roleLabel = u.role === 'admin' ? 'Admin' : 'Employ\u00e9';
+      rows += '<tr>' +
+        '<td>' + u.username + '</td>' +
+        '<td><span class="badge ' + badgeClass + '">' + roleLabel + '</span></td>' +
+        '<td><button class="delete-btn" onclick="deleteUser(\'' + u.username + '\')">×</button></td>' +
+        '</tr>';
+    });
+    div.innerHTML = '<table class="rules-table"><thead><tr><th>Utilisateur</th><th>R\u00f4le</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
+  } catch(e) { console.error('renderUsers error:', e); }
 }
 </script>
 </body>
