@@ -335,6 +335,9 @@ function getClientCategory(customerId) {
   if (email.includes('@loblaw.ca') || email.includes('@provigo.ca') || email.includes('@maxi.ca')) return 'loblaws';
   const loblawsKeywords = ['maxi', 'provigo', 'loblaws inc', 'intermarché', 'intermarche', 'metc'];
   if (loblawsKeywords.some(k => clientName.includes(k))) return 'loblaws';
+  // Clients DEK Hockey → produits CSP
+  const cspKeywords = ['dek hockey', 'dek'];
+  if (cspKeywords.some(k => clientName.includes(k))) return 'csp';
   return 'all';
 }
 
@@ -347,6 +350,9 @@ function filterProductsByCategory(category) {
       p.FullyQualifiedName.toLowerCase().includes('métro') ||
       p.FullyQualifiedName.toLowerCase().includes('metro')
     ));
+  }
+  if (category === 'csp') {
+    return qbProducts.filter(p => p.FullyQualifiedName && p.FullyQualifiedName.toLowerCase().startsWith('csp'));
   }
   // Clients standard — seulement les produits sous la catégorie MAGASIN dans QB
   return qbProducts.filter(p => p.FullyQualifiedName && p.FullyQualifiedName.toLowerCase().startsWith('magasin'));
