@@ -635,6 +635,166 @@ app.get('/import', requireAppAuth, (req, res) => {
   res.sendFile(path.join(__dirname, 'import.html'));
 });
 
+app.get('/inventaire', requireAppAuth, (req, res) => {
+  res.sendFile(path.join(__dirname, 'inventaire.html'));
+});
+
+app.get('/production', requireAppAuth, (req, res) => {
+  res.sendFile(path.join(__dirname, 'production.html'));
+});
+
+app.get('/planning', requireAppAuth, (req, res) => {
+  res.sendFile(path.join(__dirname, 'planning.html'));
+});
+
+// ─── Inventory API ────────────────────────────────────────────────────────────
+
+// Produits d'inventaire (liste fixe basée sur les produits MAGASIN)
+const INVENTORY_PRODUCTS = [
+  'CAISSE 12x BAMBINO TOUTE GARNIE',
+  'CAISSE 8X MARGHERITA',
+  'CAISSE 8X MÉDITERRANÉENNE',
+  'CAISSE 8x PEPPERONI-BACON',
+  'CAISSE 8x TOUTE GARNIE',
+  'CAISSE BOULE DE PÂTE (20x unités)',
+  'PFPIZZ-AD',
+  'PFPIZZ-PEP',
+  'PFPIZZ-VEGE',
+  'PFPIZZA-MARG',
+  'PFPIZZFRO'
+];
+
+// GET stock actuel
+app.get('/api/inventory', requireAppAuth, async (req, res) => {
+  try {
+    if (!db) return res.status(500).json({ error: 'DB non connectée' });
+    const items = await db.collection('inventory').find({}, { projection: { _id: 0 } }).toArray();
+    // Retourne tous les produits, avec stock 0 si pas encore dans la DB
+    const result = INVENTORY_PRODUCTS.map(name => {
+      const found = items.find(i => i.name === name);
+      return { name, stock: found ? found.stock : 0, threshold: found ? (found.threshold || 10) : 10 };
+    });
+    res.json(result);
+  } catch(err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST — Ajouter production (augmente le stock)
+app.post('/api/inventory/add', requireAppAuth, async (req, res) => {
+  const { name, qty, note } = req.body;
+  if (!name || !qty || qty <= 0) return res.status(400).json({ error: 'Données invalides' });
+  try {
+    if (!db) return res.status(500).json({ error: 'DB non connectée' });
+    await db.collection('inventory').updateOne(
+      { name },
+      { $inc: { stock: qty }, $setOnInsert: { threshold: 10 } },
+      { upsert: true }
+    );
+    // Log production
+    await db.collection('productionLog').insertOne({
+      name, qty, note: note || '', type: 'production',
+      createdAt: new Date(), createdBy: req.appUser?.username || 'unknown'
+    });
+    res.json({ success: true });
+  } catch(err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST — Déduire stock (vente manuelle ou correction)
+app.post('/api/inventory/deduct', requireAppAuth, async (req, res) => {
+  const { name, qty, note } = req.body;
+  if (!name || !qty || qty <= 0) return res.status(400).json({ error: 'Données invalides' });
+  try {
+    if (!db) return res.status(500).json({ error: 'DB non connectée' });
+    await db.collection('inventory').updateOne(
+      { name },
+      { $inc: { stock: -qty } },
+      { upsert: true }
+    );
+    await db.collection('productionLog').insertOne({
+      name, qty: -qty, note: note || '', type: 'deduction',
+      createdAt: new Date(), createdBy: req.appUser?.username || 'unknown'
+    });
+    res.json({ success: true });
+  } catch(err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST — Modifier le seuil d'alerte d'un produit
+app.post('/api/inventory/threshold', requireAdmin, async (req, res) => {
+  const { name, threshold } = req.body;
+  if (!name || threshold === undefined) return res.status(400).json({ error: 'Données invalides' });
+  try {
+    if (!db) return res.status(500).json({ error: 'DB non connectée' });
+    await db.collection('inventory').updateOne({ name }, { $set: { threshold } }, { upsert: true });
+    res.json({ success: true });
+  } catch(err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET historique de production
+app.get('/api/inventory/log', requireAppAuth, async (req, res) => {
+  try {
+    if (!db) return res.status(500).json({ error: 'DB non connectée' });
+    const log = await db.collection('productionLog')
+      .find({})
+      .sort({ createdAt: -1 })
+      .limit(100)
+      .toArray();
+    res.json(log);
+  } catch(err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Planning API ─────────────────────────────────────────────────────────────
+
+// GET toutes les livraisons planifiées
+app.get('/api/planning', requireAppAuth, async (req, res) => {
+  try {
+    if (!db) return res.status(500).json({ error: 'DB non connectée' });
+    const plans = await db.collection('deliveryPlans')
+      .find({})
+      .sort({ deliveryDate: 1 })
+      .toArray();
+    res.json(plans.map(p => ({ ...p, _id: p._id.toString() })));
+  } catch(err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST — Créer une livraison planifiée
+app.post('/api/planning/add', requireAppAuth, async (req, res) => {
+  const { clientName, deliveryDate, items } = req.body;
+  if (!clientName || !deliveryDate || !items?.length) return res.status(400).json({ error: 'Données invalides' });
+  try {
+    if (!db) return res.status(500).json({ error: 'DB non connectée' });
+    const result = await db.collection('deliveryPlans').insertOne({
+      clientName, deliveryDate, items,
+      createdAt: new Date(), createdBy: req.appUser?.username || 'unknown'
+    });
+    res.json({ success: true, id: result.insertedId.toString() });
+  } catch(err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE — Supprimer une livraison planifiée
+app.delete('/api/planning/:id', requireAppAuth, async (req, res) => {
+  try {
+    if (!db) return res.status(500).json({ error: 'DB non connectée' });
+    const { ObjectId } = require('mongodb');
+    await db.collection('deliveryPlans').deleteOne({ _id: new ObjectId(req.params.id) });
+    res.json({ success: true });
+  } catch(err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/auth', (req, res) => {
   // handled above
 });
