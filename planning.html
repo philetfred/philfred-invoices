@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Phil & Fred — Planning</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.44.0/tabler-icons.min.css">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f5; min-height: 100vh; }
+  .header { background: #1a1a1a; color: white; padding: 16px 24px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  .logo-text { font-size: 22px; font-weight: 500; }
+  .logo-text span { color: #e63946; }
+  .sub { font-size: 11px; color: #888; letter-spacing: 2px; text-transform: uppercase; }
+  .nav-links { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+  .nav-btn { background: none; border: 1px solid #444; color: #ccc; padding: 7px 13px; border-radius: 8px; cursor: pointer; font-size: 13px; text-decoration: none; display: flex; align-items: center; gap: 5px; }
+  .nav-btn:hover { background: #333; color: white; }
+  .nav-btn.active { background: #e63946; border-color: #e63946; color: white; }
+  .container { max-width: 900px; margin: 32px auto; padding: 0 16px; }
+  .card { background: white; border-radius: 12px; border: 1px solid #e5e5e5; padding: 24px; margin-bottom: 20px; }
+  .section-title { font-size: 11px; font-weight: 500; color: #888; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+  .section-title::after { content: ''; flex: 1; height: 1px; background: #f0f0f0; }
+  .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+  .field label { font-size: 12px; color: #666; font-weight: 500; }
+  .field input, .field select { padding: 10px 12px; border-radius: 8px; border: 1px solid #e5e5e5; font-size: 14px; background: #fafafa; color: #1a1a1a; width: 100%; }
+  .field input:focus { outline: none; border-color: #e63946; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .btn-red { background: #e63946; color: white; border: none; padding: 12px 20px; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 6px; }
+  .btn-red:hover { background: #c1121f; }
+  .btn-outline { background: none; border: 1px solid #e5e5e5; color: #666; padding: 8px 14px; border-radius: 8px; font-size: 13px; cursor: pointer; }
+  .btn-outline:hover { border-color: #e63946; color: #e63946; }
+  .item-row { display: grid; grid-template-columns: 2fr 80px; gap: 8px; align-items: center; margin-bottom: 8px; }
+  .item-row select, .item-row input { padding: 8px 10px; border-radius: 8px; border: 1px solid #e5e5e5; font-size: 13px; background: #fafafa; width: 100%; }
+  .remove-item-btn { background: none; border: none; color: #ccc; cursor: pointer; font-size: 18px; padding: 4px; }
+  .remove-item-btn:hover { color: #e63946; }
+  .add-item-btn { background: none; border: 1px dashed #e5e5e5; color: #888; padding: 8px 16px; border-radius: 8px; cursor: pointer; font-size: 13px; width: 100%; margin-top: 4px; }
+  .add-item-btn:hover { border-color: #e63946; color: #e63946; }
+  .delivery-card { background: white; border-radius: 12px; border: 1px solid #e5e5e5; padding: 20px; margin-bottom: 16px; }
+  .delivery-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 14px; }
+  .delivery-title { font-size: 16px; font-weight: 600; color: #1a1a1a; }
+  .delivery-date { font-size: 13px; color: #888; margin-top: 3px; }
+  .delivery-table { width: 100%; border-collapse: collapse; }
+  .delivery-table th { font-size: 11px; color: #888; font-weight: 500; padding: 6px 10px; border-bottom: 1px solid #f0f0f0; text-align: left; }
+  .delivery-table td { padding: 8px 10px; border-bottom: 1px solid #f9f9f9; font-size: 13px; }
+  .need-ok { color: #16a34a; font-weight: 600; }
+  .need-warn { color: #ea580c; font-weight: 600; }
+  .need-critical { color: #dc2626; font-weight: 600; }
+  .delete-btn { background: none; border: none; color: #ccc; cursor: pointer; font-size: 18px; }
+  .delete-btn:hover { color: #e63946; }
+  .empty { text-align: center; padding: 40px; color: #888; font-size: 14px; }
+  .days-badge { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 600; margin-left: 8px; }
+  .days-soon { background: #fff7ed; color: #ea580c; }
+  .days-ok { background: #f0fdf4; color: #16a34a; }
+  .days-past { background: #fef2f2; color: #dc2626; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <div class="logo-text">Phil <span>&</span> Fred</div>
+    <div class="sub">Pizzeria · Planning</div>
+  </div>
+  <div class="nav-links">
+    <a href="/" class="nav-btn"><i class="ti ti-file-invoice"></i> Facturation</a>
+    <a href="/inventaire" class="nav-btn"><i class="ti ti-box"></i> Inventaire</a>
+    <a href="/production" class="nav-btn"><i class="ti ti-plus"></i> Production</a>
+    <a href="/planning" class="nav-btn active"><i class="ti ti-calendar"></i> Planning</a>
+  </div>
+</div>
+
+<div class="container">
+
+  <!-- Formulaire nouvelle livraison -->
+  <div class="card">
+    <div class="section-title">Ajouter une livraison planifiée</div>
+
+    <div class="grid2">
+      <div class="field">
+        <label>Client / Destination</label>
+        <input type="text" id="client-name" placeholder="ex: IGA Laprairie" />
+      </div>
+      <div class="field">
+        <label>Date de livraison</label>
+        <input type="date" id="delivery-date" />
+      </div>
+    </div>
+
+    <div style="font-size:12px;color:#666;font-weight:500;margin-bottom:8px;">Produits à livrer</div>
+    <div id="plan-items"></div>
+    <button class="add-item-btn" onclick="addPlanItem()">
+      <i class="ti ti-plus"></i> Ajouter un produit
+    </button>
+
+    <div style="margin-top:16px; display:flex; justify-content:flex-end;">
+      <button class="btn-red" onclick="savePlan()">
+        <i class="ti ti-calendar-plus"></i> Planifier cette livraison
+      </button>
+    </div>
+  </div>
+
+  <!-- Livraisons planifiées -->
+  <div class="section-title" style="padding:0 4px;">Livraisons à venir</div>
+  <div id="plans-list"><div class="empty">Chargement...</div></div>
+
+</div>
+
+<script>
+const PRODUCTS = [
+  'CAISSE 12x BAMBINO TOUTE GARNIE',
+  'CAISSE 8X MARGHERITA',
+  'CAISSE 8X MÉDITERRANÉENNE',
+  'CAISSE 8x PEPPERONI-BACON',
+  'CAISSE 8x TOUTE GARNIE',
+  'CAISSE BOULE DE PÂTE (20x unités)',
+  'PFPIZZ-AD',
+  'PFPIZZ-PEP',
+  'PFPIZZ-VEGE',
+  'PFPIZZA-MARG',
+  'PFPIZZFRO'
+];
+
+let inventory = [];
+let planItemCount = 0;
+
+function productOptions(selected) {
+  return PRODUCTS.map(p => '<option' + (p === selected ? ' selected' : '') + '>' + p + '</option>').join('');
+}
+
+function addPlanItem(name, qty) {
+  planItemCount++;
+  const id = 'pi-' + planItemCount;
+  const div = document.createElement('div');
+  div.className = 'item-row';
+  div.id = id;
+  div.innerHTML =
+    '<select class="plan-product-select"><option value="">— Produit —</option>' + productOptions(name || '') + '</select>' +
+    '<input type="number" class="plan-qty-input" placeholder="Qté" min="1" value="' + (qty || '') + '" />' +
+    '<button class="remove-item-btn" onclick="document.getElementById(\'' + id + '\').remove()">×</button>';
+  document.getElementById('plan-items').appendChild(div);
+}
+
+async function savePlan() {
+  const clientName = document.getElementById('client-name').value.trim();
+  const deliveryDate = document.getElementById('delivery-date').value;
+  if (!clientName || !deliveryDate) { alert('Entre le client et la date.'); return; }
+
+  const items = [];
+  document.querySelectorAll('#plan-items .item-row').forEach(row => {
+    const name = row.querySelector('.plan-product-select').value;
+    const qty = parseInt(row.querySelector('.plan-qty-input').value);
+    if (name && qty > 0) items.push({ name, qty });
+  });
+
+  if (!items.length) { alert('Ajoute au moins un produit.'); return; }
+
+  try {
+    const res = await fetch('/api/planning/add', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clientName, deliveryDate, items })
+    });
+    const data = await res.json();
+    if (data.success) {
+      document.getElementById('client-name').value = '';
+      document.getElementById('plan-items').innerHTML = '';
+      planItemCount = 0;
+      addPlanItem();
+      await loadPlans();
+    } else {
+      alert('Erreur : ' + (data.error || 'Inconnue'));
+    }
+  } catch(e) { alert('Erreur réseau.'); }
+}
+
+async function deletePlan(id) {
+  if (!confirm('Supprimer cette livraison planifiée ?')) return;
+  await fetch('/api/planning/' + id, { method: 'DELETE' });
+  await loadPlans();
+}
+
+async function loadPlans() {
+  try {
+    const [plansRes, invRes] = await Promise.all([
+      fetch('/api/planning'),
+      fetch('/api/inventory')
+    ]);
+    const plans = await plansRes.json();
+    inventory = await invRes.json();
+
+    const container = document.getElementById('plans-list');
+    if (!plans.length) {
+      container.innerHTML = '<div class="empty">Aucune livraison planifiée.</div>';
+      return;
+    }
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    let html = '';
+    plans.forEach(plan => {
+      const delivDate = new Date(plan.deliveryDate + 'T00:00:00');
+      const diffDays = Math.round((delivDate - today) / (1000 * 60 * 60 * 24));
+      let daysBadge;
+      if (diffDays < 0) daysBadge = '<span class="days-badge days-past">En retard</span>';
+      else if (diffDays === 0) daysBadge = '<span class="days-badge days-soon">Aujourd\'hui</span>';
+      else if (diffDays <= 3) daysBadge = '<span class="days-badge days-soon">Dans ' + diffDays + 'j</span>';
+      else daysBadge = '<span class="days-badge days-ok">Dans ' + diffDays + 'j</span>';
+
+      const dateStr = delivDate.toLocaleDateString('fr-CA', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+
+      let rows = '';
+      plan.items.forEach(item => {
+        const invItem = inventory.find(i => i.name === item.name);
+        const stock = invItem ? invItem.stock : 0;
+        const needed = Math.max(0, item.qty - stock);
+        let needClass, needStr;
+        if (needed === 0) { needClass = 'need-ok'; needStr = '✅ Rien'; }
+        else if (needed <= item.qty * 0.5) { needClass = 'need-warn'; needStr = '⚠️ ' + needed + ' cs'; }
+        else { needClass = 'need-critical'; needStr = '🔴 ' + needed + ' cs'; }
+
+        rows += '<tr>' +
+          '<td style="font-weight:500;">' + item.name + '</td>' +
+          '<td style="text-align:center;">' + item.qty + ' cs</td>' +
+          '<td style="text-align:center;">' + stock + ' cs</td>' +
+          '<td style="text-align:center;" class="' + needClass + '">' + needStr + '</td>' +
+          '</tr>';
+      });
+
+      html += '<div class="delivery-card">' +
+        '<div class="delivery-header">' +
+        '<div>' +
+        '<div class="delivery-title">' + plan.clientName + daysBadge + '</div>' +
+        '<div class="delivery-date"><i class="ti ti-calendar"></i> ' + dateStr + '</div>' +
+        '</div>' +
+        '<button class="delete-btn" onclick="deletePlan(\'' + plan._id + '\')">×</button>' +
+        '</div>' +
+        '<table class="delivery-table">' +
+        '<thead><tr><th>Produit</th><th style="text-align:center;">À livrer</th><th style="text-align:center;">En stock</th><th style="text-align:center;">À produire</th></tr></thead>' +
+        '<tbody>' + rows + '</tbody></table>' +
+        '</div>';
+    });
+
+    container.innerHTML = html;
+  } catch(e) {
+    document.getElementById('plans-list').innerHTML = '<div class="empty">Erreur de chargement.</div>';
+  }
+}
+
+async function init() {
+  const res = await fetch('/api/app-status');
+  const data = await res.json();
+  if (!data.loggedIn) { window.location.href = '/login'; return; }
+  // Set default delivery date to next week
+  const nextWeek = new Date();
+  nextWeek.setDate(nextWeek.getDate() + 7);
+  document.getElementById('delivery-date').value = nextWeek.toISOString().split('T')[0];
+  addPlanItem();
+  await loadPlans();
+}
+
+init();
+</script>
+</body>
+</html>

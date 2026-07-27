@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Phil & Fred — Production</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.44.0/tabler-icons.min.css">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f5; min-height: 100vh; }
+  .header { background: #1a1a1a; color: white; padding: 16px 24px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  .logo-text { font-size: 22px; font-weight: 500; }
+  .logo-text span { color: #e63946; }
+  .sub { font-size: 11px; color: #888; letter-spacing: 2px; text-transform: uppercase; }
+  .nav-links { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+  .nav-btn { background: none; border: 1px solid #444; color: #ccc; padding: 7px 13px; border-radius: 8px; cursor: pointer; font-size: 13px; text-decoration: none; display: flex; align-items: center; gap: 5px; }
+  .nav-btn:hover { background: #333; color: white; }
+  .nav-btn.active { background: #e63946; border-color: #e63946; color: white; }
+  .container { max-width: 700px; margin: 32px auto; padding: 0 16px; }
+  .card { background: white; border-radius: 12px; border: 1px solid #e5e5e5; padding: 24px; margin-bottom: 20px; }
+  .section-title { font-size: 11px; font-weight: 500; color: #888; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+  .section-title::after { content: ''; flex: 1; height: 1px; background: #f0f0f0; }
+  .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+  .field label { font-size: 12px; color: #666; font-weight: 500; }
+  .field select, .field input, .field textarea { padding: 11px 14px; border-radius: 8px; border: 1px solid #e5e5e5; font-size: 15px; background: #fafafa; color: #1a1a1a; width: 100%; }
+  .field select:focus, .field input:focus { outline: none; border-color: #e63946; background: white; }
+  .qty-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .btn-red { background: #e63946; color: white; border: none; padding: 14px; border-radius: 8px; font-size: 16px; font-weight: 600; cursor: pointer; width: 100%; margin-top: 4px; display: flex; align-items: center; justify-content: center; gap: 8px; }
+  .btn-red:hover { background: #c1121f; }
+  .btn-red:disabled { background: #ccc; cursor: not-allowed; }
+  .success-box { background: #f0fdf4; border: 1px solid #86efac; border-radius: 8px; padding: 14px 16px; font-size: 14px; color: #16a34a; display: none; margin-top: 12px; text-align: center; }
+  .success-box.visible { display: block; }
+  .log-table { width: 100%; border-collapse: collapse; }
+  .log-table th { text-align: left; font-size: 12px; color: #888; font-weight: 500; padding: 8px 10px; border-bottom: 1px solid #f0f0f0; }
+  .log-table td { padding: 10px 10px; border-bottom: 1px solid #f9f9f9; font-size: 13px; }
+  .log-table tr:hover td { background: #fafafa; }
+  .qty-pos { color: #16a34a; font-weight: 600; }
+  .qty-neg { color: #dc2626; font-weight: 600; }
+  .empty { text-align: center; padding: 24px; color: #888; font-size: 14px; }
+  .tab-btns { display: flex; gap: 8px; margin-bottom: 20px; }
+  .tab-btn { flex: 1; padding: 10px; border-radius: 8px; border: 1px solid #e5e5e5; background: #fafafa; color: #666; font-size: 14px; cursor: pointer; font-weight: 500; }
+  .tab-btn.active { background: #1a1a1a; color: white; border-color: #1a1a1a; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <div class="logo-text">Phil <span>&</span> Fred</div>
+    <div class="sub">Pizzeria · Production</div>
+  </div>
+  <div class="nav-links">
+    <a href="/" class="nav-btn"><i class="ti ti-file-invoice"></i> Facturation</a>
+    <a href="/inventaire" class="nav-btn"><i class="ti ti-box"></i> Inventaire</a>
+    <a href="/production" class="nav-btn active"><i class="ti ti-plus"></i> Production</a>
+    <a href="/planning" class="nav-btn"><i class="ti ti-calendar"></i> Planning</a>
+  </div>
+</div>
+
+<div class="container">
+
+  <div class="card">
+    <div class="section-title">Enregistrer une entrée</div>
+
+    <div class="tab-btns">
+      <button class="tab-btn active" id="tab-add" onclick="switchTab('add')">
+        <i class="ti ti-plus"></i> Ajouter au stock
+      </button>
+      <button class="tab-btn" id="tab-remove" onclick="switchTab('remove')">
+        <i class="ti ti-minus"></i> Retirer du stock
+      </button>
+    </div>
+
+    <div class="field">
+      <label>Produit</label>
+      <select id="product-select">
+        <option value="">— Choisir un produit —</option>
+        <option>CAISSE 12x BAMBINO TOUTE GARNIE</option>
+        <option>CAISSE 8X MARGHERITA</option>
+        <option>CAISSE 8X MÉDITERRANÉENNE</option>
+        <option>CAISSE 8x PEPPERONI-BACON</option>
+        <option>CAISSE 8x TOUTE GARNIE</option>
+        <option>CAISSE BOULE DE PÂTE (20x unités)</option>
+        <option>PFPIZZ-AD</option>
+        <option>PFPIZZ-PEP</option>
+        <option>PFPIZZ-VEGE</option>
+        <option>PFPIZZA-MARG</option>
+        <option>PFPIZZFRO</option>
+      </select>
+    </div>
+
+    <div class="qty-row">
+      <div class="field">
+        <label id="qty-label">Nombre de caisses produites</label>
+        <input type="number" id="qty-input" placeholder="ex: 45" min="1" />
+      </div>
+      <div class="field">
+        <label>Date</label>
+        <input type="date" id="date-input" />
+      </div>
+    </div>
+
+    <div class="field">
+      <label>Note (optionnel)</label>
+      <input type="text" id="note-input" placeholder="ex: Palette 3, batch matin" />
+    </div>
+
+    <button class="btn-red" id="submit-btn" onclick="submitEntry()">
+      <i class="ti ti-check"></i> <span id="btn-label">Ajouter au stock</span>
+    </button>
+    <div class="success-box" id="success-box">✅ Enregistré avec succès!</div>
+  </div>
+
+  <div class="card">
+    <div class="section-title">Historique récent</div>
+    <div id="log-table"><div class="empty">Chargement...</div></div>
+  </div>
+
+</div>
+
+<script>
+let currentTab = 'add';
+
+function switchTab(tab) {
+  currentTab = tab;
+  document.getElementById('tab-add').className = 'tab-btn' + (tab === 'add' ? ' active' : '');
+  document.getElementById('tab-remove').className = 'tab-btn' + (tab === 'remove' ? ' active' : '');
+  document.getElementById('qty-label').textContent = tab === 'add' ? 'Nombre de caisses produites' : 'Nombre de caisses à retirer';
+  document.getElementById('btn-label').textContent = tab === 'add' ? 'Ajouter au stock' : 'Retirer du stock';
+  document.getElementById('success-box').classList.remove('visible');
+}
+
+async function submitEntry() {
+  const name = document.getElementById('product-select').value;
+  const qty = parseInt(document.getElementById('qty-input').value);
+  const note = document.getElementById('note-input').value.trim();
+
+  if (!name) { alert('Choisis un produit.'); return; }
+  if (!qty || qty <= 0) { alert('Entre une quantité valide.'); return; }
+
+  const btn = document.getElementById('submit-btn');
+  btn.disabled = true;
+
+  try {
+    const endpoint = currentTab === 'add' ? '/api/inventory/add' : '/api/inventory/deduct';
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, qty, note })
+    });
+    const data = await res.json();
+    if (data.success) {
+      document.getElementById('product-select').value = '';
+      document.getElementById('qty-input').value = '';
+      document.getElementById('note-input').value = '';
+      document.getElementById('success-box').classList.add('visible');
+      setTimeout(() => document.getElementById('success-box').classList.remove('visible'), 3000);
+      await loadLog();
+    } else {
+      alert('Erreur : ' + (data.error || 'Inconnue'));
+    }
+  } catch(e) {
+    alert('Erreur réseau.');
+  }
+  btn.disabled = false;
+}
+
+async function loadLog() {
+  try {
+    const res = await fetch('/api/inventory/log');
+    const log = await res.json();
+    if (!log.length) {
+      document.getElementById('log-table').innerHTML = '<div class="empty">Aucune entrée pour l\'instant.</div>';
+      return;
+    }
+    let rows = '';
+    log.slice(0, 30).forEach(entry => {
+      const date = new Date(entry.createdAt).toLocaleDateString('fr-CA', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      const qtyClass = entry.qty > 0 ? 'qty-pos' : 'qty-neg';
+      const qtyStr = entry.qty > 0 ? '+' + entry.qty : '' + entry.qty;
+      const typeLabel = entry.type === 'production' ? '📦 Production' : '📤 Retrait';
+      rows += '<tr>' +
+        '<td>' + date + '</td>' +
+        '<td style="font-weight:500;">' + entry.name + '</td>' +
+        '<td class="' + qtyClass + '">' + qtyStr + ' cs</td>' +
+        '<td style="color:#888;">' + typeLabel + '</td>' +
+        '<td style="color:#aaa;font-size:12px;">' + (entry.note || '') + '</td>' +
+        '<td style="color:#aaa;font-size:12px;">' + (entry.createdBy || '') + '</td>' +
+        '</tr>';
+    });
+    document.getElementById('log-table').innerHTML =
+      '<table class="log-table">' +
+      '<thead><tr><th>Date</th><th>Produit</th><th>Qté</th><th>Type</th><th>Note</th><th>Par</th></tr></thead>' +
+      '<tbody>' + rows + '</tbody></table>';
+  } catch(e) {
+    document.getElementById('log-table').innerHTML = '<div class="empty">Erreur de chargement.</div>';
+  }
+}
+
+async function init() {
+  const res = await fetch('/api/app-status');
+  const data = await res.json();
+  if (!data.loggedIn) { window.location.href = '/login'; return; }
+  document.getElementById('date-input').value = new Date().toISOString().split('T')[0];
+  await loadLog();
+}
+
+init();
+</script>
+</body>
+</html>

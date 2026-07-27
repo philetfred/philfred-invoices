@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Phil & Fred — Inventaire</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.44.0/tabler-icons.min.css">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f5; min-height: 100vh; }
+  .header { background: #1a1a1a; color: white; padding: 16px 24px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  .logo-text { font-size: 22px; font-weight: 500; }
+  .logo-text span { color: #e63946; }
+  .sub { font-size: 11px; color: #888; letter-spacing: 2px; text-transform: uppercase; }
+  .nav-links { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+  .nav-btn { background: none; border: 1px solid #444; color: #ccc; padding: 7px 13px; border-radius: 8px; cursor: pointer; font-size: 13px; text-decoration: none; display: flex; align-items: center; gap: 5px; }
+  .nav-btn:hover { background: #333; color: white; }
+  .nav-btn.active { background: #e63946; border-color: #e63946; color: white; }
+  .container { max-width: 900px; margin: 32px auto; padding: 0 16px; }
+  .card { background: white; border-radius: 12px; border: 1px solid #e5e5e5; padding: 24px; margin-bottom: 20px; }
+  .section-title { font-size: 11px; font-weight: 500; color: #888; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+  .section-title::after { content: ''; flex: 1; height: 1px; background: #f0f0f0; }
+  .inv-table { width: 100%; border-collapse: collapse; }
+  .inv-table th { text-align: left; font-size: 12px; color: #888; font-weight: 500; padding: 8px 12px; border-bottom: 2px solid #f0f0f0; }
+  .inv-table td { padding: 12px 12px; border-bottom: 1px solid #f5f5f5; font-size: 14px; vertical-align: middle; }
+  .inv-table tr:hover td { background: #fafafa; }
+  .stock-num { font-size: 22px; font-weight: 700; }
+  .stock-ok { color: #16a34a; }
+  .stock-warn { color: #ea580c; }
+  .stock-critical { color: #dc2626; }
+  .badge-ok { background: #f0fdf4; color: #16a34a; padding: 3px 10px; border-radius: 20px; font-size: 12px; font-weight: 500; }
+  .badge-warn { background: #fff7ed; color: #ea580c; padding: 3px 10px; border-radius: 20px; font-size: 12px; font-weight: 500; }
+  .badge-critical { background: #fef2f2; color: #dc2626; padding: 3px 10px; border-radius: 20px; font-size: 12px; font-weight: 500; }
+  .threshold-input { width: 70px; padding: 4px 8px; border-radius: 6px; border: 1px solid #e5e5e5; font-size: 13px; text-align: center; }
+  .save-btn { background: none; border: 1px solid #e5e5e5; color: #888; padding: 4px 10px; border-radius: 6px; font-size: 12px; cursor: pointer; }
+  .save-btn:hover { border-color: #e63946; color: #e63946; }
+  .summary-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 20px; }
+  .summary-card { background: white; border-radius: 12px; border: 1px solid #e5e5e5; padding: 20px; text-align: center; }
+  .summary-num { font-size: 36px; font-weight: 700; }
+  .summary-label { font-size: 12px; color: #888; margin-top: 4px; }
+  .loading { text-align: center; padding: 40px; color: #888; }
+  .refresh-btn { background: none; border: 1px solid #e5e5e5; color: #666; padding: 7px 13px; border-radius: 8px; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 5px; }
+  .refresh-btn:hover { border-color: #1a1a1a; color: #1a1a1a; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <div class="logo-text">Phil <span>&</span> Fred</div>
+    <div class="sub">Pizzeria · Inventaire</div>
+  </div>
+  <div class="nav-links">
+    <a href="/" class="nav-btn"><i class="ti ti-file-invoice"></i> Facturation</a>
+    <a href="/inventaire" class="nav-btn active"><i class="ti ti-box"></i> Inventaire</a>
+    <a href="/production" class="nav-btn"><i class="ti ti-plus"></i> Production</a>
+    <a href="/planning" class="nav-btn"><i class="ti ti-calendar"></i> Planning</a>
+  </div>
+</div>
+
+<div class="container">
+
+  <div class="summary-grid" id="summary-grid">
+    <div class="summary-card">
+      <div class="summary-num" id="total-products">—</div>
+      <div class="summary-label">Produits suivis</div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-num" style="color:#ea580c;" id="low-stock-count">—</div>
+      <div class="summary-label">Stock bas ⚠️</div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-num" style="color:#dc2626;" id="critical-count">—</div>
+      <div class="summary-label">Stock critique 🔴</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="section-title">
+      Stock actuel
+      <button class="refresh-btn" onclick="loadInventory()"><i class="ti ti-refresh"></i> Rafraîchir</button>
+    </div>
+    <div id="inventory-table"><div class="loading">Chargement...</div></div>
+  </div>
+
+</div>
+
+<script>
+let isAdmin = false;
+
+async function init() {
+  const res = await fetch('/api/app-status');
+  const data = await res.json();
+  if (!data.loggedIn) { window.location.href = '/login'; return; }
+  isAdmin = data.role === 'admin';
+  await loadInventory();
+}
+
+async function loadInventory() {
+  try {
+    const res = await fetch('/api/inventory');
+    const items = await res.json();
+
+    // Summary
+    const lowStock = items.filter(i => i.stock > 0 && i.stock <= i.threshold);
+    const critical = items.filter(i => i.stock <= 0);
+    document.getElementById('total-products').textContent = items.length;
+    document.getElementById('low-stock-count').textContent = lowStock.length;
+    document.getElementById('critical-count').textContent = critical.length;
+
+    // Table
+    let rows = '';
+    items.forEach(item => {
+      let statusClass, badgeHtml;
+      if (item.stock <= 0) {
+        statusClass = 'stock-critical';
+        badgeHtml = '<span class="badge-critical">🔴 Rupture</span>';
+      } else if (item.stock <= item.threshold) {
+        statusClass = 'stock-warn';
+        badgeHtml = '<span class="badge-warn">⚠️ Stock bas</span>';
+      } else {
+        statusClass = 'stock-ok';
+        badgeHtml = '<span class="badge-ok">✅ OK</span>';
+      }
+
+      const thresholdCell = isAdmin
+        ? '<td><input type="number" class="threshold-input" value="' + item.threshold + '" id="th-' + encodeURIComponent(item.name) + '" min="0" /> <button class="save-btn" onclick="saveThreshold(\'' + encodeURIComponent(item.name) + '\')">Sauver</button></td>'
+        : '<td style="color:#aaa;font-size:13px;">' + item.threshold + ' cs</td>';
+
+      rows += '<tr>' +
+        '<td style="font-weight:500;">' + item.name + '</td>' +
+        '<td><span class="stock-num ' + statusClass + '">' + item.stock + '</span> <span style="font-size:12px;color:#aaa;">cs</span></td>' +
+        '<td>' + badgeHtml + '</td>' +
+        thresholdCell +
+        '</tr>';
+    });
+
+    const thHeader = isAdmin ? '<th>Seuil alerte</th>' : '<th>Seuil</th>';
+    document.getElementById('inventory-table').innerHTML =
+      '<table class="inv-table">' +
+      '<thead><tr><th>Produit</th><th>Stock</th><th>Statut</th>' + thHeader + '</tr></thead>' +
+      '<tbody>' + rows + '</tbody></table>';
+
+  } catch(e) {
+    document.getElementById('inventory-table').innerHTML = '<div class="loading">Erreur de chargement.</div>';
+  }
+}
+
+async function saveThreshold(encodedName) {
+  const name = decodeURIComponent(encodedName);
+  const input = document.getElementById('th-' + encodedName);
+  const threshold = parseInt(input.value);
+  if (isNaN(threshold) || threshold < 0) { alert('Seuil invalide.'); return; }
+  try {
+    await fetch('/api/inventory/threshold', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, threshold })
+    });
+    await loadInventory();
+  } catch(e) { alert('Erreur.'); }
+}
+
+init();
+</script>
+</body>
+</html>
