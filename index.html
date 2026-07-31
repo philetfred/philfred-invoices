@@ -117,6 +117,9 @@
   <span class="google-tag" id="google-tag" style="display:none;">
     <i class="ti ti-brand-google-drive"></i> Drive connecté
   </span>
+  <button id="google-folder-btn" onclick="toggleFolderPicker()" style="display:none; background:none; border:1px solid #444; color:#aaa; padding:6px 10px; border-radius:6px; font-size:11px; cursor:pointer;" title="Choisir le dossier Drive">
+    <i class="ti ti-folder"></i>
+  </button>
   <button class="reconnect-btn" id="reconnect-btn" onclick="window.location.href='/auth'" style="display:none;">
     Reconnecter QuickBooks
   </button>
@@ -124,6 +127,16 @@
   <button onclick="logout()" style="background:none; border:1px solid #444; color:#aaa; padding:6px 12px; border-radius:6px; font-size:12px; cursor:pointer;">
     Déconnexion
   </button>
+</div>
+
+<div id="folder-picker" style="display:none; position:fixed; top:70px; right:24px; z-index:100; background:white; border:1px solid #e5e5e5; border-radius:10px; padding:16px; width:340px; box-shadow:0 8px 24px rgba(0,0,0,.15);">
+  <div style="font-size:12px; color:#888; text-transform:uppercase; letter-spacing:.5px; margin-bottom:8px;">Dossier Google Drive pour les factures</div>
+  <input type="text" id="folder-input" placeholder="Colle le lien du dossier Drive ou son ID" style="width:100%; padding:9px 12px; border-radius:8px; border:1px solid #e5e5e5; font-size:13px; margin-bottom:10px;" />
+  <div style="display:flex; gap:8px;">
+    <button onclick="saveFolder()" style="flex:1; background:#e63946; color:white; border:none; padding:8px; border-radius:8px; font-size:13px; cursor:pointer;">Enregistrer</button>
+    <button onclick="toggleFolderPicker()" style="background:none; border:1px solid #e5e5e5; color:#666; padding:8px 14px; border-radius:8px; font-size:13px; cursor:pointer;">Fermer</button>
+  </div>
+  <div id="folder-status" style="font-size:12px; margin-top:8px;"></div>
 </div>
 
 <div class="container">
@@ -239,6 +252,10 @@ async function checkStatus() {
     const gData = await gRes.json();
     if (gData.connected) {
       document.getElementById('google-tag').style.display = 'flex';
+      if (isAdmin) {
+        document.getElementById('google-folder-btn').style.display = 'flex';
+        if (gData.folderId) document.getElementById('folder-input').value = 'https://drive.google.com/drive/folders/' + gData.folderId;
+      }
     } else if (isAdmin) {
       document.getElementById('google-connect-btn').style.display = 'flex';
     }
@@ -253,6 +270,35 @@ async function checkStatus() {
     else { showConnect(); }
   } catch(e) { showConnect(); }
   if (params.get('connected') || params.get('googleConnected')) window.history.replaceState({}, '', '/');
+}
+
+function toggleFolderPicker() {
+  const panel = document.getElementById('folder-picker');
+  panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+}
+
+async function saveFolder() {
+  const folder = document.getElementById('folder-input').value.trim();
+  const statusEl = document.getElementById('folder-status');
+  if (!folder) { statusEl.textContent = 'Colle un lien ou un ID de dossier.'; statusEl.style.color = '#dc2626'; return; }
+  try {
+    const res = await fetch('/api/google-folder', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folder })
+    });
+    const data = await res.json();
+    if (data.success) {
+      statusEl.textContent = '✅ Dossier enregistré — les prochaines factures iront ici.';
+      statusEl.style.color = '#16a34a';
+    } else {
+      statusEl.textContent = 'Erreur : ' + (data.error || 'inconnue');
+      statusEl.style.color = '#dc2626';
+    }
+  } catch(e) {
+    statusEl.textContent = 'Erreur réseau.';
+    statusEl.style.color = '#dc2626';
+  }
 }
 
 function showConnect() {
