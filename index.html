@@ -495,7 +495,6 @@ function fmt(n) { return n.toLocaleString('fr-CA', { style:'currency', currency:
 async function createInvoice() {
   if (!selectedClient) { alert('Sélectionne un client d\'abord.'); return; }
   const lines = [];
-  const inventoryItems = []; // Pour déduire l'inventaire après succès
   let valid = true;
   document.querySelectorAll('.item-row').forEach(row => {
     const sel = row.querySelector('.product-select');
@@ -519,9 +518,6 @@ async function createInvoice() {
     };
     if (desc) lineObj.Description = desc;
     lines.push(lineObj);
-    // Capture le nom du produit pour l'inventaire
-    const productName = sel.options[sel.selectedIndex]?.text || '';
-    if (productName) inventoryItems.push({ name: productName, qty });
   });
   if (!valid || !lines.length) { alert('Ajoute au moins un produit valide.'); return; }
 
@@ -551,22 +547,10 @@ async function createInvoice() {
       document.getElementById('qb-link').href = `https://app.qbo.intuit.com/app/invoice?txnId=${data.Invoice.Id}`;
       btn.innerHTML = '<i class="ti ti-circle-check"></i> Facture créée !';
       btn.style.background = '#15803d';
-      // ── Déduire l'inventaire pour chaque produit vendu ──
-      for (const item of inventoryItems) {
-        try {
-          await fetch('/api/inventory/deduct', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              name: item.name,
-              qty: item.qty,
-              note: 'Facture #' + (document.getElementById('ref-num').value || data.Invoice.Id)
-            })
-          });
-        } catch(e) {
-          console.warn('Inventaire non déduit pour', item.name, e);
-        }
-      }
+      // Note: l'inventaire n'est PAS déduit ici. Le webhook QuickBooks
+      // (côté serveur) s'en charge automatiquement dès que la facture est
+      // détectée dans QuickBooks — c'est la seule source de vérité pour
+      // éviter une double déduction (une fois ici, une fois par le webhook).
     } else {
       throw new Error(JSON.stringify(data));
     }
