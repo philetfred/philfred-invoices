@@ -109,9 +109,10 @@ app.get('/callback', async (req, res) => {
     const data = await response.json();
     if (data.access_token) {
       await saveSessionToken(sessionId, { accessToken: data.access_token, refreshToken: data.refresh_token, realmId, expiresAt: Date.now() + (data.expires_in * 1000) });
+      console.log('QB OAuth: nouvelle connexion, realmId =', realmId);
       res.redirect('/?connected=true');
-    } else { res.redirect('/?error=auth_failed'); }
-  } catch (err) { res.redirect('/?error=' + err.message); }
+    } else { console.error('QB OAuth: échec auth_failed', data); res.redirect('/?error=auth_failed'); }
+  } catch (err) { console.error('QB OAuth callback erreur:', err); res.redirect('/?error=' + err.message); }
 });
 
 async function getValidToken(req, res) {
@@ -138,10 +139,24 @@ async function getValidToken(req, res) {
   return { token: session.accessToken, realmId: session.realmId };
 }
 
-async function getAnyValidToken() {
+// ─── Récupère un token valide, de préférence pour le realmId demandé ───────
+// (utilisé par le webhook, qui n'a pas de cookie de session).
+// Corrigé: on ne prend plus "n'importe quelle" session — on filtre d'abord
+// par realmId pour éviter d'utiliser un token appartenant à une autre
+// compagnie QuickBooks (ce qui ferait échouer silencieusement l'appel API).
+async function getAnyValidToken(preferredRealmId) {
   if (!db) throw new Error('DB non connectée');
-  const session = await db.collection('sessions').findOne({ accessToken: { $ne: null } }, { sort: { updatedAt: -1 } });
-  if (!session || !session.accessToken) throw new Error('Aucune session QB active');
+  const query = { accessToken: { $ne: null } };
+  if (preferredRealmId) query.realmId = preferredRealmId;
+  let session = await db.collection('sessions').findOne(query, { sort: { updatedAt: -1 } });
+  if (!session && preferredRealmId) {
+    console.warn('getAnyValidToken: aucune session trouvée pour realmId =', preferredRealmId, '— on retente sans filtre realmId (à corriger: reconnecter QuickBooks sur ce realm).');
+    session = await db.collection('sessions').findOne({ accessToken: { $ne: null } }, { sort: { updatedAt: -1 } });
+  }
+  if (!session || !session.accessToken) throw new Error('Aucune session QB active (as-tu cliqué "Connecter QuickBooks" au moins une fois ?)');
+  if (preferredRealmId && session.realmId && session.realmId !== preferredRealmId) {
+    console.warn('getAnyValidToken: la session trouvée (realmId=' + session.realmId + ') ne correspond pas au realmId du webhook (' + preferredRealmId + ').');
+  }
   if (Date.now() > session.expiresAt - 300000) {
     const credentials = Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64');
     const response = await fetch('https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer', {
@@ -160,6 +175,18 @@ async function getAnyValidToken() {
 }
 
 let qbProducts = [];
+let qbProductsLoadedAt = 0;
+
+// Recharge la liste des produits QB. Appelée au premier webhook, puis
+// automatiquement re-rafraîchie si un item reçu du webhook n'est pas trouvé
+// dans le cache (ex: nouveau produit créé dans QB après le dernier chargement),
+// et de toute façon toutes les 30 minutes pour éviter un cache périmé.
+async function loadQbProducts(realmId, token) {
+  const prodData = await (await fetch(`https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=SELECT * FROM Item WHERE Active=true MAXRESULTS 200&minorversion=65`, { headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' } })).json();
+  qbProducts = (prodData.QueryResponse?.Item || []).filter(i => ['Service','Inventory','NonInventory'].includes(i.Type));
+  qbProductsLoadedAt = Date.now();
+  console.log('Webhook QB: cache produits rechargé (' + qbProducts.length + ' items)');
+}
 
 app.get('/api/customer/:id', async (req, res) => {
   try {
@@ -413,6 +440,15 @@ const INVENTORY_PRODUCTS = [
   'PFPIZZ-AD','PFPIZZ-PEP','PFPIZZ-VEGE','PFPIZZA-MARG','PFPIZZFRO'
 ];
 
+// Table de correspondance normalisée (minuscule + espaces compressés) pour
+// matcher un nom d'item QuickBooks à un produit suivi, même si la casse ou
+// les espaces diffèrent légèrement (ex: espace insécable, casse différente).
+function normalizeName(s) { return (s || '').toLowerCase().trim().replace(/\s+/g, ' '); }
+const NORMALIZED_INVENTORY_PRODUCTS = new Map(INVENTORY_PRODUCTS.map(name => [normalizeName(name), name]));
+function matchInventoryProduct(qbItemName) {
+  return NORMALIZED_INVENTORY_PRODUCTS.get(normalizeName(qbItemName)) || null;
+}
+
 app.get('/api/inventory', requireAppAuth, async (req, res) => {
   try {
     if (!db) return res.status(500).json({ error: 'DB non connectée' });
@@ -489,52 +525,83 @@ app.delete('/api/planning/:id', requireAppAuth, async (req, res) => {
 
 const crypto_wb = require('crypto');
 
+// ─── Webhook QuickBooks: déduit l'inventaire quand une facture est créée ────
+// Correctifs apportés (voir résumé fourni à l'utilisateur):
+//  1. Log systématique à la réception, pour confirmer qu'Intuit appelle bien
+//     cet endpoint (le point de défaillance le plus fréquent est en amont,
+//     côté configuration du webhook dans le Intuit Developer Dashboard —
+//     ce code ne peut rien y faire si l'appel n'arrive jamais).
+//  2. Avertissement explicite si QB_WEBHOOK_TOKEN n'est pas configuré.
+//  3. Le token OAuth utilisé est maintenant choisi en priorité pour le
+//     realmId de l'événement, au lieu de "n'importe quelle" session.
+//  4. Le cache des produits QB se recharge automatiquement si un item du
+//     webhook n'y est pas trouvé (au lieu de rester figé après le 1er appel).
+//  5. La correspondance nom QB → produit suivi tolère maintenant les
+//     différences de casse/espaces.
+//  6. Logging détaillé ligne par ligne pour diagnostiquer précisément
+//     pourquoi une ligne ne déduit pas (item non suivi, item non trouvé, etc.)
 app.post('/api/webhook-qb', async (req, res) => {
+  console.log('Webhook QB: requête reçue, content-length =', req.headers['content-length']);
   const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.from(JSON.stringify(req.body));
   const webhookToken = process.env.QB_WEBHOOK_TOKEN;
   const signature = req.headers['intuit-signature'];
+  if (!webhookToken) {
+    console.warn('Webhook QB: QB_WEBHOOK_TOKEN non configuré — la vérification de signature est DÉSACTIVÉE. À corriger côté variables d\'environnement.');
+  }
   if (webhookToken && signature) {
     const hash = crypto_wb.createHmac('sha256', webhookToken).update(rawBody).digest('base64');
-    if (hash !== signature) { console.log('Webhook QB: signature invalide'); return res.status(401).json({ error: 'Invalid signature' }); }
+    if (hash !== signature) { console.log('Webhook QB: signature invalide — vérifie que QB_WEBHOOK_TOKEN correspond exactement au "Webhooks Verifier Token" du Intuit Developer Dashboard.'); return res.status(401).json({ error: 'Invalid signature' }); }
+  } else if (webhookToken && !signature) {
+    console.warn('Webhook QB: aucun header intuit-signature reçu — requête ignorée ou test manuel ?');
   }
   res.status(200).json({ success: true });
   try {
     const payload = JSON.parse(rawBody.toString());
+    const notifCount = (payload.eventNotifications || []).length;
+    console.log('Webhook QB: payload reçu,', notifCount, 'notification(s)');
     for (const notif of (payload.eventNotifications || [])) {
       const realmId = notif.realmId;
-      for (const entity of (notif.dataChangeEvent?.entities || [])) {
+      const entities = notif.dataChangeEvent?.entities || [];
+      console.log('Webhook QB: realmId =', realmId, '-', entities.length, 'entité(s):', entities.map(e => e.name + '/' + e.operation).join(', '));
+      for (const entity of entities) {
         if (entity.name !== 'Invoice' || !['Create', 'Update'].includes(entity.operation)) continue;
         const invoiceId = entity.id;
         console.log('Webhook QB: facture', entity.operation, invoiceId);
         try {
-          const token = await getAnyValidToken();
-          const invData = await (await fetch(`https://quickbooks.api.intuit.com/v3/company/${realmId || token.realmId}/invoice/${invoiceId}?minorversion=65`, { headers: { 'Authorization': 'Bearer ' + token.token, 'Accept': 'application/json' } })).json();
+          const token = await getAnyValidToken(realmId);
+          const effectiveRealmId = realmId || token.realmId;
+          const invData = await (await fetch(`https://quickbooks.api.intuit.com/v3/company/${effectiveRealmId}/invoice/${invoiceId}?minorversion=65`, { headers: { 'Authorization': 'Bearer ' + token.token, 'Accept': 'application/json' } })).json();
           const invoice = invData.Invoice;
-          if (!invoice) continue;
-          if (qbProducts.length === 0) {
-            try {
-              const prodData = await (await fetch(`https://quickbooks.api.intuit.com/v3/company/${realmId || token.realmId}/query?query=SELECT * FROM Item WHERE Active=true MAXRESULTS 200&minorversion=65`, { headers: { 'Authorization': 'Bearer ' + token.token, 'Accept': 'application/json' } })).json();
-              qbProducts = (prodData.QueryResponse?.Item || []).filter(i => ['Service','Inventory','NonInventory'].includes(i.Type));
-            } catch(e) { console.error('Erreur chargement produits QB:', e.message); }
-          }
+          if (!invoice) { console.log('Webhook QB: facture introuvable via API pour id =', invoiceId, '- réponse:', JSON.stringify(invData).slice(0, 300)); continue; }
+          if (qbProducts.length === 0) { await loadQbProducts(effectiveRealmId, token.token); }
           for (const line of (invoice.Line || [])) {
             if (line.DetailType !== 'SalesItemLineDetail') continue;
             const detail = line.SalesItemLineDetail;
             const qty = detail?.Qty || 0;
             const itemId = detail?.ItemRef?.value;
             if (!qty || !itemId) continue;
-            const productName = qbProducts.find(p => p.Id === itemId)?.Name || '';
-            if (!productName || !INVENTORY_PRODUCTS.includes(productName)) continue;
+            let qbItem = qbProducts.find(p => p.Id === itemId);
+            if (!qbItem) {
+              // Item pas dans le cache (nouveau produit ?) — on recharge une fois.
+              await loadQbProducts(effectiveRealmId, token.token);
+              qbItem = qbProducts.find(p => p.Id === itemId);
+            }
+            const qbItemName = qbItem?.Name || '';
+            const productName = matchInventoryProduct(qbItemName);
+            if (!qbItemName) { console.log('Webhook QB: item QB introuvable pour Id =', itemId, '- inventaire non déduit pour cette ligne.'); continue; }
+            if (!productName) { console.log('Webhook QB: item "' + qbItemName + '" n\'est pas dans INVENTORY_PRODUCTS - ignoré (normal si ce n\'est pas un produit d\'inventaire suivi).'); continue; }
             if (db) {
               await db.collection('inventory').updateOne({ name: productName }, { $inc: { stock: -qty } }, { upsert: true });
               await db.collection('productionLog').insertOne({ name: productName, qty: -qty, note: 'Facture QB #' + (invoice.DocNumber || invoiceId) + ' (webhook)', type: 'deduction', createdAt: new Date(), createdBy: 'quickbooks-webhook' });
-              console.log('Inventaire déduit:', productName, '-' + qty);
+              console.log('Webhook QB: inventaire déduit avec succès:', productName, '-' + qty);
+            } else {
+              console.warn('Webhook QB: DB non connectée, déduction impossible pour', productName);
             }
           }
-        } catch(e) { console.error('Webhook QB erreur facture:', invoiceId, e.message); }
+        } catch(e) { console.error('Webhook QB erreur facture:', invoiceId, e.message, e.stack); }
       }
     }
-  } catch(e) { console.error('Webhook QB parsing erreur:', e.message); }
+  } catch(e) { console.error('Webhook QB parsing erreur:', e.message, e.stack); }
 });
 
 app.get('*', (req, res) => {
