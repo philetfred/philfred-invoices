@@ -125,7 +125,11 @@ app.get('/callback', async (req, res) => {
 // ─── Google Drive OAuth (connexion unique, indépendante de QuickBooks) ─────
 app.get('/auth-google', requireAdmin, (req, res) => {
   if (!GOOGLE_CLIENT_ID) return res.status(500).send('GOOGLE_CLIENT_ID non configuré sur le serveur.');
-  const scope = 'https://www.googleapis.com/auth/drive.file';
+  // Scope complet (pas juste "drive.file") pour pouvoir déposer les PDF dans
+  // N'IMPORTE QUEL dossier existant de ton choix, pas seulement un dossier
+  // créé par l'app. Si tu t'étais déjà connecté avant ce changement, il faut
+  // te reconnecter une fois pour obtenir ce nouvel accès.
+  const scope = 'https://www.googleapis.com/auth/drive';
   const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${GOOGLE_CLIENT_ID}&redirect_uri=${encodeURIComponent(GOOGLE_REDIRECT_URI)}&response_type=code&scope=${encodeURIComponent(scope)}&access_type=offline&prompt=consent`;
   res.redirect(authUrl);
 });
@@ -194,6 +198,12 @@ async function getOrCreateDriveFolder() {
   return folder.id;
 }
 
+// Nettoie le nom du client pour un nom de fichier lisible (enlève les
+// caractères de contrôle / le "/" qui pourrait prêter à confusion).
+function sanitizeFileName(s) {
+  return (s || '').replace(/[\/\\:*?"<>|\r\n]/g, '-').trim().slice(0, 80);
+}
+
 async function fetchInvoicePdf(realmId, invoiceId, token) {
   const res = await fetch(`https://quickbooks.api.intuit.com/v3/company/${realmId}/invoice/${invoiceId}/pdf?minorversion=65`, {
     headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/pdf' }
@@ -227,7 +237,21 @@ async function uploadPdfToDrive(fileName, pdfBuffer) {
 app.get('/api/google-status', requireAppAuth, async (req, res) => {
   if (!db) return res.json({ connected: false });
   const auth = await db.collection('googleAuth').findOne({ key: 'default' });
-  res.json({ connected: !!(auth && auth.refreshToken) });
+  res.json({ connected: !!(auth && auth.refreshToken), folderId: auth?.folderId || null });
+});
+
+// Change le dossier Drive cible. Accepte soit un ID de dossier brut, soit un
+// lien Drive complet (on extrait l'ID automatiquement).
+app.put('/api/google-folder', requireAdmin, async (req, res) => {
+  const { folder } = req.body;
+  if (!folder || !folder.trim()) return res.status(400).json({ error: 'Dossier manquant' });
+  try {
+    if (!db) return res.status(500).json({ error: 'DB non connectée' });
+    const match = folder.match(/[-\w]{25,}/); // extrait l'ID depuis une URL Drive, ou prend tel quel
+    const folderId = match ? match[0] : folder.trim();
+    await db.collection('googleAuth').updateOne({ key: 'default' }, { $set: { folderId } }, { upsert: true });
+    res.json({ success: true, folderId });
+  } catch(err) { res.status(500).json({ error: err.message }); }
 });
 
 async function getValidToken(req, res) {
@@ -842,7 +866,8 @@ app.post('/api/webhook-qb', async (req, res) => {
           // (ex: Google Drive pas encore connecté).
           try {
             const pdfBuffer = await fetchInvoicePdf(effectiveRealmId, invoiceId, token.token);
-            const fileName = 'Facture ' + (invoice.DocNumber || invoiceId) + '.pdf';
+            const clientName = sanitizeFileName(invoice.CustomerRef?.name || '');
+            const fileName = (clientName || ('Facture ' + (invoice.DocNumber || invoiceId))) + '.pdf';
             await uploadPdfToDrive(fileName, pdfBuffer);
           } catch(e) {
             console.warn('Google Drive: dépôt PDF échoué pour facture', invoiceId, '-', e.message);
