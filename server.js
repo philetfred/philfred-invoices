@@ -430,11 +430,24 @@ app.get('/production', requireAppAuth, (req, res) => { res.sendFile(path.join(__
 app.get('/planning', requireAppAuth, (req, res) => { res.sendFile(path.join(__dirname, 'planning.html')); });
 app.get('/factures', requireAppAuth, (req, res) => { res.sendFile(path.join(__dirname, 'factures.html')); });
 
+// ─── Produits d'inventaire suivis ──────────────────────────────────────────
+// Chaque produit a une unité d'affichage: "cs" (caisse) par défaut, ou une
+// unité personnalisée (ex: "unité" pour les pizzas vendues à la pièce).
 const INVENTORY_PRODUCTS = [
   'CAISSE 12x BAMBINO TOUTE GARNIE','CAISSE 8X MARGHERITA','CAISSE 8X MÉDITERRANÉENNE',
   'CAISSE 8x PEPPERONI-BACON','CAISSE 8x TOUTE GARNIE','CAISSE BOULE DE PÂTE (20x unités)',
-  'PFPIZZ-AD','PFPIZZ-PEP','PFPIZZ-VEGE','PFPIZZA-MARG','PFPIZZFRO'
+  'PFPIZZ-AD','PFPIZZ-PEP','PFPIZZ-VEGE','PFPIZZA-MARG','PFPIZZFRO',
+  'Pizza Bambino fromage','Pizza Bambino pepperoni','Pizza Bambino Toute Garnie','Pizza Bambino Végétarienne'
 ];
+
+// Unité d'affichage par produit (par défaut "cs" si absent d'ici).
+const INVENTORY_UNITS = {
+  'Pizza Bambino fromage': 'unité',
+  'Pizza Bambino pepperoni': 'unité',
+  'Pizza Bambino Toute Garnie': 'unité',
+  'Pizza Bambino Végétarienne': 'unité'
+};
+function unitFor(name) { return INVENTORY_UNITS[name] || 'cs'; }
 
 // Table de correspondance normalisée (minuscule + espaces compressés) pour
 // matcher un nom d'item QuickBooks à un produit suivi, même si la casse ou
@@ -449,7 +462,10 @@ app.get('/api/inventory', requireAppAuth, async (req, res) => {
   try {
     if (!db) return res.status(500).json({ error: 'DB non connectée' });
     const items = await db.collection('inventory').find({}, { projection: { _id: 0 } }).toArray();
-    res.json(INVENTORY_PRODUCTS.map(name => { const f = items.find(i => i.name === name); return { name, stock: f ? f.stock : 0, threshold: f ? (f.threshold || 10) : 10 }; }));
+    res.json(INVENTORY_PRODUCTS.map(name => {
+      const f = items.find(i => i.name === name);
+      return { name, stock: f ? f.stock : 0, threshold: f ? (f.threshold || 10) : 10, unit: unitFor(name) };
+    }));
   } catch(err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -520,10 +536,6 @@ app.delete('/api/planning/:id', requireAppAuth, async (req, res) => {
 });
 
 // ─── Onglet "Factures" (liste des factures créées via cette app) ──────────
-// Distinct des factures QuickBooks en général: seules celles créées depuis
-// l'app (index.html / import.html) sont ajoutées ici, via /api/app-invoices/add
-// appelé côté client juste après un POST réussi vers /api/qb-post (invoice).
-
 app.get('/api/app-invoices', requireAppAuth, async (req, res) => {
   try {
     if (!db) return res.status(500).json({ error: 'DB non connectée' });
@@ -552,13 +564,9 @@ app.post('/api/app-invoices/add', requireAppAuth, async (req, res) => {
   } catch(err) { res.status(500).json({ error: err.message }); }
 });
 
-// Modifie une facture existante (items/quantités) : met à jour la vraie
-// facture dans QuickBooks (mise à jour "sparse", donc le reste de la facture
-// n'est pas touché) puis ajuste l'inventaire pour la DIFFÉRENCE seulement
-// (pas la quantité totale, pour ne pas fausser le stock).
 app.put('/api/app-invoices/:invoiceId', requireAppAuth, async (req, res) => {
   const { invoiceId } = req.params;
-  const { lines } = req.body; // [{ itemId, itemName, qty, unitPrice, taxCode, description }]
+  const { lines } = req.body;
   if (!Array.isArray(lines) || !lines.length) return res.status(400).json({ error: 'Ajoute au moins un item.' });
   try {
     if (!db) return res.status(500).json({ error: 'DB non connectée' });
@@ -567,12 +575,10 @@ app.put('/api/app-invoices/:invoiceId', requireAppAuth, async (req, res) => {
 
     const { token, realmId } = await getValidToken(req, res);
 
-    // 1. Récupérer le SyncToken actuel (obligatoire pour toute mise à jour QB)
     const curData = await (await fetch(`https://quickbooks.api.intuit.com/v3/company/${realmId}/invoice/${invoiceId}?minorversion=65`, { headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' } })).json();
     const currentInvoice = curData.Invoice;
     if (!currentInvoice) return res.status(404).json({ error: 'Facture introuvable dans QuickBooks (a-t-elle été supprimée ?).' });
 
-    // 2. Construire les nouvelles lignes et envoyer la mise à jour QB
     const qbLines = lines.map(l => {
       const detail = { ItemRef: { value: l.itemId }, Qty: l.qty, UnitPrice: l.unitPrice };
       if (l.taxCode && l.taxCode !== 'NON') detail.TaxCodeRef = { value: l.taxCode };
@@ -589,7 +595,6 @@ app.put('/api/app-invoices/:invoiceId', requireAppAuth, async (req, res) => {
     const updData = await updRes.json();
     if (!updData.Invoice) return res.status(400).json({ error: JSON.stringify(updData) });
 
-    // 3. Calcul du delta d'inventaire (seulement pour les produits suivis)
     function trackedMap(ls) {
       const map = {};
       for (const l of (ls || [])) {
@@ -616,7 +621,6 @@ app.put('/api/app-invoices/:invoiceId', requireAppAuth, async (req, res) => {
       changes.push({ name, delta });
     }
 
-    // 4. Garder la liste locale et le suivi anti-doublon du webhook synchronisés
     const newTrackedLines = Object.entries(newMap).map(([productName, qty]) => ({ productName, qty }));
     await db.collection('appInvoices').updateOne({ invoiceId }, { $set: {
       lines, totalAmt: updData.Invoice.TotalAmt, updatedAt: new Date(), updatedBy: req.appUser?.username || 'unknown'
@@ -627,8 +631,6 @@ app.put('/api/app-invoices/:invoiceId', requireAppAuth, async (req, res) => {
   } catch(err) { res.status(500).json({ error: err.message }); }
 });
 
-// "Vider" la liste hebdomadaire — réservé aux admins, suppression définitive
-// (ne touche PAS aux vraies factures dans QuickBooks, seulement à la liste locale).
 app.delete('/api/app-invoices', requireAdmin, async (req, res) => {
   try {
     if (!db) return res.status(500).json({ error: 'DB non connectée' });
@@ -669,7 +671,6 @@ app.post('/api/webhook-qb', async (req, res) => {
         const invoiceId = entity.id;
         const operation = entity.operation;
 
-        // ─── Suppression / annulation: on RESTAURE l'inventaire ───────────
         if (operation === 'Delete' || operation === 'Void') {
           console.log('Webhook QB: facture', operation, invoiceId, '- tentative de restauration de l\'inventaire.');
           try {
