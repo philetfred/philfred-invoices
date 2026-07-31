@@ -180,8 +180,7 @@ let qbProductsLoadedAt = 0;
 
 // Recharge la liste des produits QB. Appelée au premier webhook, puis
 // automatiquement re-rafraîchie si un item reçu du webhook n'est pas trouvé
-// dans le cache (ex: nouveau produit créé dans QB après le dernier chargement),
-// et de toute façon toutes les 30 minutes pour éviter un cache périmé.
+// dans le cache (ex: nouveau produit créé dans QB après le dernier chargement).
 async function loadQbProducts(realmId, token) {
   const prodData = await (await fetch(`https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=SELECT * FROM Item WHERE Active=true MAXRESULTS 200&minorversion=65`, { headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' } })).json();
   qbProducts = (prodData.QueryResponse?.Item || []).filter(i => ['Service','Inventory','NonInventory'].includes(i.Type));
@@ -526,21 +525,8 @@ app.delete('/api/planning/:id', requireAppAuth, async (req, res) => {
 
 const crypto_wb = require('crypto');
 
-// ─── Webhook QuickBooks: déduit l'inventaire quand une facture est créée ────
-// Correctifs apportés (voir résumé fourni à l'utilisateur):
-//  1. Log systématique à la réception, pour confirmer qu'Intuit appelle bien
-//     cet endpoint (le point de défaillance le plus fréquent est en amont,
-//     côté configuration du webhook dans le Intuit Developer Dashboard —
-//     ce code ne peut rien y faire si l'appel n'arrive jamais).
-//  2. Avertissement explicite si QB_WEBHOOK_TOKEN n'est pas configuré.
-//  3. Le token OAuth utilisé est maintenant choisi en priorité pour le
-//     realmId de l'événement, au lieu de "n'importe quelle" session.
-//  4. Le cache des produits QB se recharge automatiquement si un item du
-//     webhook n'y est pas trouvé (au lieu de rester figé après le 1er appel).
-//  5. La correspondance nom QB → produit suivi tolère maintenant les
-//     différences de casse/espaces.
-//  6. Logging détaillé ligne par ligne pour diagnostiquer précisément
-//     pourquoi une ligne ne déduit pas (item non suivi, item non trouvé, etc.)
+// ─── Webhook QuickBooks: déduit l'inventaire quand une facture est créée,
+//     et le RESTAURE quand elle est supprimée ou annulée ────────────────────
 app.post('/api/webhook-qb', async (req, res) => {
   console.log('Webhook QB: requête reçue, content-length =', req.headers['content-length']);
   const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.from(JSON.stringify(req.body));
@@ -565,9 +551,49 @@ app.post('/api/webhook-qb', async (req, res) => {
       const entities = notif.dataChangeEvent?.entities || [];
       console.log('Webhook QB: realmId =', realmId, '-', entities.length, 'entité(s):', entities.map(e => e.name + '/' + e.operation).join(', '));
       for (const entity of entities) {
-        if (entity.name !== 'Invoice' || !['Create', 'Update'].includes(entity.operation)) continue;
+        if (entity.name !== 'Invoice') continue;
         const invoiceId = entity.id;
-        console.log('Webhook QB: facture', entity.operation, invoiceId);
+        const operation = entity.operation;
+
+        // ─── Suppression / annulation: on RESTAURE l'inventaire ───────────
+        // On ne peut plus interroger l'API pour une facture supprimée, donc
+        // on se base sur ce qu'on a nous-même déduit et enregistré au moment
+        // de la création (voir plus bas: webhookProcessedInvoices.lines).
+        if (operation === 'Delete' || operation === 'Void') {
+          console.log('Webhook QB: facture', operation, invoiceId, '- tentative de restauration de l\'inventaire.');
+          try {
+            if (!db) { console.warn('Webhook QB: DB non connectée, restauration impossible.'); continue; }
+            // On "réclame" la restauration atomiquement pour éviter de la faire 2 fois
+            // si Delete/Void se déclenche plusieurs fois pour la même facture.
+            // Note: driver mongodb v6 retourne le document directement (ou null),
+            // pas enveloppé dans { value } comme les anciennes versions.
+            const record = await db.collection('webhookProcessedInvoices').findOneAndUpdate(
+              { realmId, invoiceId, reversed: { $ne: true } },
+              { $set: { reversed: true, reversedAt: new Date(), reversedReason: operation } },
+              { returnDocument: 'before' }
+            );
+            if (!record) {
+              console.log('Webhook QB: aucune déduction connue (ou déjà restaurée) pour la facture', invoiceId, '- rien à faire.');
+              continue;
+            }
+            for (const line of (record.lines || [])) {
+              await db.collection('inventory').updateOne({ name: line.productName }, { $inc: { stock: line.qty } }, { upsert: true });
+              await db.collection('productionLog').insertOne({
+                name: line.productName,
+                qty: line.qty,
+                note: 'Facture QB #' + (record.docNumber || invoiceId) + ' ' + (operation === 'Delete' ? 'supprimée' : 'annulée') + ' (webhook)',
+                type: 'production',
+                createdAt: new Date(),
+                createdBy: 'quickbooks-webhook'
+              });
+              console.log('Webhook QB: inventaire restauré:', line.productName, '+' + line.qty);
+            }
+          } catch(e) { console.error('Webhook QB erreur restauration facture:', invoiceId, e.message, e.stack); }
+          continue;
+        }
+
+        if (!['Create', 'Update'].includes(operation)) continue;
+        console.log('Webhook QB: facture', operation, invoiceId);
         try {
           const token = await getAnyValidToken(realmId);
           const effectiveRealmId = realmId || token.realmId;
@@ -584,21 +610,21 @@ app.post('/api/webhook-qb', async (req, res) => {
           // On "réserve" la facture en l'insérant AVANT de déduire (via l'index
           // unique realmId+invoiceId) — si deux événements arrivent presque
           // en même temps, un seul gagne la course et déduit réellement.
-          // Si tu dois vraiment corriger une quantité sur une facture existante
-          // après coup, ajuste l'inventaire manuellement via Production/Inventaire.
+          let reserved = true;
           if (db) {
             try {
-              await db.collection('webhookProcessedInvoices').insertOne({ realmId: effectiveRealmId, invoiceId, processedAt: new Date(), docNumber: invoice.DocNumber || null });
+              await db.collection('webhookProcessedInvoices').insertOne({ realmId: effectiveRealmId, invoiceId, processedAt: new Date(), docNumber: invoice.DocNumber || null, lines: [], reversed: false });
             } catch(dupErr) {
               if (dupErr.code === 11000) {
+                reserved = false;
                 console.log('Webhook QB: facture', invoiceId, 'déjà traitée (ou en cours de traitement) - déduction ignorée (anti-doublon).');
-                continue;
-              }
-              throw dupErr;
+              } else { throw dupErr; }
             }
           }
+          if (!reserved) continue;
 
           if (qbProducts.length === 0) { await loadQbProducts(effectiveRealmId, token.token); }
+          const deductedLines = [];
           for (const line of (invoice.Line || [])) {
             if (line.DetailType !== 'SalesItemLineDetail') continue;
             const detail = line.SalesItemLineDetail;
@@ -619,9 +645,15 @@ app.post('/api/webhook-qb', async (req, res) => {
               await db.collection('inventory').updateOne({ name: productName }, { $inc: { stock: -qty } }, { upsert: true });
               await db.collection('productionLog').insertOne({ name: productName, qty: -qty, note: 'Facture QB #' + (invoice.DocNumber || invoiceId) + ' (webhook)', type: 'deduction', createdAt: new Date(), createdBy: 'quickbooks-webhook' });
               console.log('Webhook QB: inventaire déduit avec succès:', productName, '-' + qty);
+              deductedLines.push({ productName, qty });
             } else {
               console.warn('Webhook QB: DB non connectée, déduction impossible pour', productName);
             }
+          }
+          // On enregistre ce qui a été déduit pour pouvoir le restaurer plus
+          // tard si la facture est supprimée ou annulée.
+          if (db && deductedLines.length) {
+            await db.collection('webhookProcessedInvoices').updateOne({ realmId: effectiveRealmId, invoiceId }, { $set: { lines: deductedLines } });
           }
         } catch(e) { console.error('Webhook QB erreur facture:', invoiceId, e.message, e.stack); }
       }
