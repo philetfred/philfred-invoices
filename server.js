@@ -57,6 +57,7 @@ async function connectMongo() {
     if (userCount === 0) { await db.collection('appUsers').insertMany(defaultAppUsers); console.log('App users initialized'); }
     await db.collection('appSessions').createIndex({ sessionId: 1 });
     await db.collection('appUsers').createIndex({ username: 1 });
+    await db.collection('webhookProcessedInvoices').createIndex({ realmId: 1, invoiceId: 1 }, { unique: true });
   } catch(err) { console.error('MongoDB connection error:', err); }
 }
 
@@ -573,6 +574,30 @@ app.post('/api/webhook-qb', async (req, res) => {
           const invData = await (await fetch(`https://quickbooks.api.intuit.com/v3/company/${effectiveRealmId}/invoice/${invoiceId}?minorversion=65`, { headers: { 'Authorization': 'Bearer ' + token.token, 'Accept': 'application/json' } })).json();
           const invoice = invData.Invoice;
           if (!invoice) { console.log('Webhook QB: facture introuvable via API pour id =', invoiceId, '- réponse:', JSON.stringify(invData).slice(0, 300)); continue; }
+
+          // ─── Anti-double-déduction ────────────────────────────────────────
+          // QuickBooks envoie souvent un événement "Create" ET un événement
+          // "Update" quasi simultanés pour une même facture tout juste créée
+          // (recalcul interne, synchronisation de champs, etc.). Sans garde-fou,
+          // chacun de ces événements déclenchait une déduction d'inventaire,
+          // donc la même facture était déduite 2 fois (parfois plus).
+          // On "réserve" la facture en l'insérant AVANT de déduire (via l'index
+          // unique realmId+invoiceId) — si deux événements arrivent presque
+          // en même temps, un seul gagne la course et déduit réellement.
+          // Si tu dois vraiment corriger une quantité sur une facture existante
+          // après coup, ajuste l'inventaire manuellement via Production/Inventaire.
+          if (db) {
+            try {
+              await db.collection('webhookProcessedInvoices').insertOne({ realmId: effectiveRealmId, invoiceId, processedAt: new Date(), docNumber: invoice.DocNumber || null });
+            } catch(dupErr) {
+              if (dupErr.code === 11000) {
+                console.log('Webhook QB: facture', invoiceId, 'déjà traitée (ou en cours de traitement) - déduction ignorée (anti-doublon).');
+                continue;
+              }
+              throw dupErr;
+            }
+          }
+
           if (qbProducts.length === 0) { await loadQbProducts(effectiveRealmId, token.token); }
           for (const line of (invoice.Line || [])) {
             if (line.DetailType !== 'SalesItemLineDetail') continue;
