@@ -6,10 +6,14 @@ const { MongoClient } = require('mongodb');
 
 const app = express();
 
-// ─── Raw body parser pour webhook QB (doit être AVANT express.json()) ─────────
-app.use('/api/webhook-qb', express.raw({ type: '*/*' }));
-
-app.use(express.json());
+// ─── Body parsers ─────────────────────────────────────────────────────────────
+app.use((req, res, next) => {
+  if (req.path === '/api/webhook-qb') {
+    express.raw({ type: '*/*' })(req, res, next);
+  } else {
+    express.json()(req, res, next);
+  }
+});
 
 // ─── Simple cookie parser ───────────────────────────────────────────────────
 app.use((req, res, next) => {
@@ -30,7 +34,6 @@ app.use((req, res, next) => {
 
 app.use(express.static(path.join(__dirname)));
 
-// ─── MongoDB Connection ───────────────────────────────────────────────────────
 const MONGODB_URI = process.env.MONGODB_URI;
 let db = null;
 
@@ -42,37 +45,21 @@ const defaultAppUsers = [
 ];
 
 async function connectMongo() {
-  if (!MONGODB_URI) {
-    console.log('No MONGODB_URI set, using in-memory price rules');
-    return;
-  }
+  if (!MONGODB_URI) { console.log('No MONGODB_URI set'); return; }
   try {
-    const client = new MongoClient(MONGODB_URI, {
-      tls: true,
-      tlsAllowInvalidCertificates: true,
-      serverSelectionTimeoutMS: 10000
-    });
+    const client = new MongoClient(MONGODB_URI, { tls: true, tlsAllowInvalidCertificates: true, serverSelectionTimeoutMS: 10000 });
     await client.connect();
     db = client.db('philfred');
     console.log('Connected to MongoDB');
     const count = await db.collection('priceRules').countDocuments();
-    if (count === 0) {
-      await db.collection('priceRules').insertMany(defaultPriceRules);
-      console.log('Price rules initialized in MongoDB');
-    }
+    if (count === 0) { await db.collection('priceRules').insertMany(defaultPriceRules); console.log('Price rules initialized'); }
     const userCount = await db.collection('appUsers').countDocuments();
-    if (userCount === 0) {
-      await db.collection('appUsers').insertMany(defaultAppUsers);
-      console.log('App users initialized in MongoDB');
-    }
+    if (userCount === 0) { await db.collection('appUsers').insertMany(defaultAppUsers); console.log('App users initialized'); }
     await db.collection('appSessions').createIndex({ sessionId: 1 });
     await db.collection('appUsers').createIndex({ username: 1 });
-  } catch(err) {
-    console.error('MongoDB connection error:', err);
-  }
+  } catch(err) { console.error('MongoDB connection error:', err); }
 }
 
-// ─── Session Management ────────────────────────────────────────────────────────
 function getOrCreateSessionId(req, res) {
   let sessionId = req.cookies.sessionId;
   if (!sessionId) {
@@ -84,30 +71,20 @@ function getOrCreateSessionId(req, res) {
 
 async function saveSessionToken(sessionId, tokenData) {
   if (db) {
-    await db.collection('sessions').updateOne(
-      { sessionId },
-      { $set: { ...tokenData, sessionId, updatedAt: new Date() } },
-      { upsert: true }
-    );
-  } else {
-    memorySessions[sessionId] = tokenData;
-  }
+    await db.collection('sessions').updateOne({ sessionId }, { $set: { ...tokenData, sessionId, updatedAt: new Date() } }, { upsert: true });
+  } else { memorySessions[sessionId] = tokenData; }
 }
 
 async function getSessionToken(sessionId) {
-  if (db) {
-    return await db.collection('sessions').findOne({ sessionId });
-  }
+  if (db) return await db.collection('sessions').findOne({ sessionId });
   return memorySessions[sessionId] || null;
 }
 
 const memorySessions = {};
-
 const CLIENT_ID = process.env.QB_CLIENT_ID;
 const CLIENT_SECRET = process.env.QB_CLIENT_SECRET;
 const REDIRECT_URI = process.env.QB_REDIRECT_URI || 'https://philfred-invoices.onrender.com/callback';
 
-// ─── OAuth Flow ───────────────────────────────────────────────────────────────
 app.get('/auth', (req, res) => {
   const sessionId = getOrCreateSessionId(req, res);
   const scope = 'com.intuit.quickbooks.accounting';
@@ -120,40 +97,23 @@ app.get('/callback', async (req, res) => {
   const { code, realmId, state } = req.query;
   if (!code) return res.status(400).send('No code received');
   let sessionId = state ? state.split('.')[0] : null;
-  if (!sessionId || sessionId.length !== 48) {
-    sessionId = getOrCreateSessionId(req, res);
-  } else {
-    res.setHeader('Set-Cookie', `sessionId=${sessionId}; HttpOnly; Path=/; Max-Age=2592000; SameSite=Lax`);
-  }
+  if (!sessionId || sessionId.length !== 48) { sessionId = getOrCreateSessionId(req, res); }
+  else { res.setHeader('Set-Cookie', `sessionId=${sessionId}; HttpOnly; Path=/; Max-Age=2592000; SameSite=Lax`); }
   try {
     const credentials = Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64');
     const response = await fetch('https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer', {
       method: 'POST',
-      headers: {
-        'Authorization': 'Basic ' + credentials,
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Accept': 'application/json'
-      },
+      headers: { 'Authorization': 'Basic ' + credentials, 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
       body: `grant_type=authorization_code&code=${code}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}`
     });
     const data = await response.json();
     if (data.access_token) {
-      await saveSessionToken(sessionId, {
-        accessToken: data.access_token,
-        refreshToken: data.refresh_token,
-        realmId: realmId,
-        expiresAt: Date.now() + (data.expires_in * 1000)
-      });
+      await saveSessionToken(sessionId, { accessToken: data.access_token, refreshToken: data.refresh_token, realmId, expiresAt: Date.now() + (data.expires_in * 1000) });
       res.redirect('/?connected=true');
-    } else {
-      res.redirect('/?error=auth_failed');
-    }
-  } catch (err) {
-    res.redirect('/?error=' + err.message);
-  }
+    } else { res.redirect('/?error=auth_failed'); }
+  } catch (err) { res.redirect('/?error=' + err.message); }
 });
 
-// ─── Token Management ─────────────────────────────────────────────────────────
 async function getValidToken(req, res) {
   const sessionId = getOrCreateSessionId(req, res);
   const session = await getSessionToken(sessionId);
@@ -162,17 +122,12 @@ async function getValidToken(req, res) {
     const credentials = Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64');
     const response = await fetch('https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer', {
       method: 'POST',
-      headers: {
-        'Authorization': 'Basic ' + credentials,
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Accept': 'application/json'
-      },
+      headers: { 'Authorization': 'Basic ' + credentials, 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
       body: `grant_type=refresh_token&refresh_token=${session.refreshToken}`
     });
     const data = await response.json();
     if (data.access_token) {
-      session.accessToken = data.access_token;
-      session.refreshToken = data.refresh_token;
+      session.accessToken = data.access_token; session.refreshToken = data.refresh_token;
       session.expiresAt = Date.now() + (data.expires_in * 1000);
       await saveSessionToken(sessionId, session);
     } else {
@@ -185,52 +140,35 @@ async function getValidToken(req, res) {
 
 async function getAnyValidToken() {
   if (!db) throw new Error('DB non connectée');
-  const session = await db.collection('sessions').findOne(
-    { accessToken: { $ne: null } },
-    { sort: { updatedAt: -1 } }
-  );
+  const session = await db.collection('sessions').findOne({ accessToken: { $ne: null } }, { sort: { updatedAt: -1 } });
   if (!session || !session.accessToken) throw new Error('Aucune session QB active');
   if (Date.now() > session.expiresAt - 300000) {
     const credentials = Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64');
     const response = await fetch('https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer', {
       method: 'POST',
-      headers: {
-        'Authorization': 'Basic ' + credentials,
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Accept': 'application/json'
-      },
+      headers: { 'Authorization': 'Basic ' + credentials, 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
       body: `grant_type=refresh_token&refresh_token=${session.refreshToken}`
     });
     const data = await response.json();
     if (data.access_token) {
-      await db.collection('sessions').updateOne(
-        { sessionId: session.sessionId },
-        { $set: { accessToken: data.access_token, refreshToken: data.refresh_token, expiresAt: Date.now() + (data.expires_in * 1000), updatedAt: new Date() } }
-      );
+      await db.collection('sessions').updateOne({ sessionId: session.sessionId },
+        { $set: { accessToken: data.access_token, refreshToken: data.refresh_token, expiresAt: Date.now() + (data.expires_in * 1000), updatedAt: new Date() } });
       return { token: data.access_token, realmId: session.realmId };
-    } else {
-      throw new Error('Token refresh failed');
-    }
+    } else { throw new Error('Token refresh failed'); }
   }
   return { token: session.accessToken, realmId: session.realmId };
 }
 
-// ─── QB Products cache (pour webhook) ────────────────────────────────────────
 let qbProducts = [];
 
 app.get('/api/customer/:id', async (req, res) => {
   try {
     const { token, realmId } = await getValidToken(req, res);
-    const url = `https://quickbooks.api.intuit.com/v3/company/${realmId}/customer/${req.params.id}?minorversion=65`;
-    const response = await fetch(url, { headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' } });
-    const data = await response.json();
-    res.json(data);
-  } catch (err) {
-    res.status(401).json({ error: err.message });
-  }
+    const response = await fetch(`https://quickbooks.api.intuit.com/v3/company/${realmId}/customer/${req.params.id}?minorversion=65`, { headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' } });
+    res.json(await response.json());
+  } catch (err) { res.status(401).json({ error: err.message }); }
 });
 
-// ─── Price Rules ──────────────────────────────────────────────────────────────
 const defaultPriceRules = [
   { name: 'IGA extra Super Marché Famille Primeau inc. Beauharnois', type: 'percent', value: -20 },
   { name: 'IGA extra Super Marché Primeau et fils inc.', type: 'percent', value: -20 },
@@ -282,20 +220,15 @@ let priceRules = [...defaultPriceRules];
 
 app.get('/api/price-rules', async (req, res) => {
   try {
-    if (db) {
-      const rules = await db.collection('priceRules').find({}, { projection: { _id: 0 } }).toArray();
-      return res.json(rules);
-    }
+    if (db) { const rules = await db.collection('priceRules').find({}, { projection: { _id: 0 } }).toArray(); return res.json(rules); }
     res.json(priceRules);
   } catch(err) { res.json(priceRules); }
 });
 
 app.post('/api/price-rules', async (req, res) => {
   try {
-    if (db) {
-      await db.collection('priceRules').deleteMany({});
-      if (req.body.length > 0) await db.collection('priceRules').insertMany(req.body);
-    } else { priceRules = req.body; }
+    if (db) { await db.collection('priceRules').deleteMany({}); if (req.body.length > 0) await db.collection('priceRules').insertMany(req.body); }
+    else { priceRules = req.body; }
     res.json({ success: true });
   } catch(err) { res.status(500).json({ error: err.message }); }
 });
@@ -303,13 +236,8 @@ app.post('/api/price-rules', async (req, res) => {
 app.post('/api/price-rules/add', async (req, res) => {
   const rule = req.body;
   try {
-    if (db) {
-      await db.collection('priceRules').deleteOne({ name: new RegExp('^' + rule.name + '$', 'i') });
-      await db.collection('priceRules').insertOne(rule);
-    } else {
-      priceRules = priceRules.filter(r => r.name.toLowerCase() !== rule.name.toLowerCase());
-      priceRules.push(rule);
-    }
+    if (db) { await db.collection('priceRules').deleteOne({ name: new RegExp('^' + rule.name + '$', 'i') }); await db.collection('priceRules').insertOne(rule); }
+    else { priceRules = priceRules.filter(r => r.name.toLowerCase() !== rule.name.toLowerCase()); priceRules.push(rule); }
     res.json({ success: true });
   } catch(err) { res.status(500).json({ error: err.message }); }
 });
@@ -317,21 +245,16 @@ app.post('/api/price-rules/add', async (req, res) => {
 app.delete('/api/price-rules/:index', async (req, res) => {
   const index = parseInt(req.params.index);
   try {
-    if (db) {
-      const rules = await db.collection('priceRules').find({}, { projection: { _id: 0 } }).toArray();
-      if (rules[index]) await db.collection('priceRules').deleteOne({ name: rules[index].name });
-    } else { priceRules.splice(index, 1); }
+    if (db) { const rules = await db.collection('priceRules').find({}, { projection: { _id: 0 } }).toArray(); if (rules[index]) await db.collection('priceRules').deleteOne({ name: rules[index].name }); }
+    else { priceRules.splice(index, 1); }
     res.json({ success: true });
   } catch(err) { res.status(500).json({ error: err.message }); }
 });
 
-// ─── Tax Codes ────────────────────────────────────────────────────────────────
 app.get('/api/taxcodes', async (req, res) => {
   try {
     const { token, realmId } = await getValidToken(req, res);
-    const url = `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=SELECT * FROM TaxCode&minorversion=65`;
-    const response = await fetch(url, { headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' } });
-    res.json(await response.json());
+    res.json(await (await fetch(`https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=SELECT * FROM TaxCode&minorversion=65`, { headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' } })).json());
   } catch (err) { res.status(401).json({ error: err.message }); }
 });
 
@@ -344,16 +267,9 @@ app.get('/api/next-invoice-number', async (req, res) => {
       fetch(`${base}/query?query=SELECT DocNumber FROM Invoice MAXRESULTS 100&minorversion=65`, { headers }),
       fetch(`${base}/query?query=SELECT DocNumber FROM CreditMemo MAXRESULTS 100&minorversion=65`, { headers })
     ]);
-    const invData = await invRes.json();
-    const cmData = await cmRes.json();
-    const allDocs = [...(invData.QueryResponse?.Invoice || []), ...(cmData.QueryResponse?.CreditMemo || [])];
+    const allDocs = [...((await invRes.json()).QueryResponse?.Invoice || []), ...((await cmRes.json()).QueryResponse?.CreditMemo || [])];
     let maxNum = 0;
-    allDocs.forEach(doc => {
-      if (doc.DocNumber) {
-        const num = parseInt(doc.DocNumber.replace(/[^0-9]/g, ''));
-        if (!isNaN(num) && num > maxNum) maxNum = num;
-      }
-    });
+    allDocs.forEach(doc => { if (doc.DocNumber) { const num = parseInt(doc.DocNumber.replace(/[^0-9]/g, '')); if (!isNaN(num) && num > maxNum) maxNum = num; } });
     res.json({ nextNumber: String(maxNum + 1) });
   } catch (err) { res.status(401).json({ error: err.message }); }
 });
@@ -368,9 +284,7 @@ app.post('/api/qb', async (req, res) => {
   const { query } = req.body;
   try {
     const { token, realmId } = await getValidToken(req, res);
-    const url = `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(query)}&minorversion=65`;
-    const response = await fetch(url, { headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' } });
-    res.json(await response.json());
+    res.json(await (await fetch(`https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(query)}&minorversion=65`, { headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' } })).json());
   } catch (err) { res.status(401).json({ error: err.message }); }
 });
 
@@ -378,15 +292,12 @@ app.post('/api/qb-post', async (req, res) => {
   const { endpoint, body } = req.body;
   try {
     const { token, realmId } = await getValidToken(req, res);
-    const url = `https://quickbooks.api.intuit.com/v3/company/${realmId}/${endpoint}?minorversion=65`;
-    const response = await fetch(url, {
+    const response = await fetch(`https://quickbooks.api.intuit.com/v3/company/${realmId}/${endpoint}?minorversion=65`, {
       method: 'POST',
       headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json', 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     });
-    // Cache les produits QB pour le webhook
-    const data = await response.json();
-    res.json(data);
+    res.json(await response.json());
   } catch (err) { res.status(401).json({ error: err.message }); }
 });
 
@@ -399,57 +310,34 @@ app.post('/api/parse-pdf', async (req, res) => {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 1000,
-        messages: [{ role: 'user', content: [
-          { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: pdfBase64 } },
-          { type: 'text', text: `Extract the purchase order data from this PDF. Return ONLY a valid JSON object (no markdown, no backticks) with this exact structure:
-{"po_number":"the purchase order number","supplier_name":"the store name","delivery_date":"YYYY-MM-DD","items":[{"description":"full product description","cases":4}]}
-Return only the JSON, nothing else.` }
-        ]}]
-      })
+      body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 1000, messages: [{ role: 'user', content: [
+        { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: pdfBase64 } },
+        { type: 'text', text: '{"po_number":"...","supplier_name":"...","delivery_date":"YYYY-MM-DD","items":[{"description":"...","cases":4}]} Return only JSON.' }
+      ]}]})
     });
     const data = await response.json();
     if (data.error) return res.status(500).json({ error: data.error.message });
     const text = data.content?.[0]?.text || '';
     let parsed;
-    try { parsed = JSON.parse(text.trim()); }
-    catch(e) {
-      const match = text.match(/\{[\s\S]*\}/);
-      if (match) parsed = JSON.parse(match[0]);
-      else return res.status(500).json({ error: 'Could not parse Claude response', raw: text });
-    }
+    try { parsed = JSON.parse(text.trim()); } catch(e) { const m = text.match(/\{[\s\S]*\}/); if (m) parsed = JSON.parse(m[0]); else return res.status(500).json({ error: 'Parse error', raw: text }); }
     res.json(parsed);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ─── App Authentication ───────────────────────────────────────────────────────
 const crypto_builtin = require('crypto');
-
-function hashPassword(password) {
-  return crypto_builtin.createHash('sha256').update(password).digest('hex');
-}
+function hashPassword(p) { return crypto_builtin.createHash('sha256').update(p).digest('hex'); }
 
 async function requireAppAuth(req, res, next) {
   const appSessionId = req.cookies.appSessionId;
   if (!appSessionId) return res.redirect('/login');
-  if (db) {
-    const session = await db.collection('appSessions').findOne({ sessionId: appSessionId });
-    if (!session) return res.redirect('/login');
-    req.appUser = session;
-  }
+  if (db) { const session = await db.collection('appSessions').findOne({ sessionId: appSessionId }); if (!session) return res.redirect('/login'); req.appUser = session; }
   next();
 }
 
 async function requireAdmin(req, res, next) {
   const appSessionId = req.cookies.appSessionId;
   if (!appSessionId) return res.status(401).json({ error: 'Non authentifié' });
-  if (db) {
-    const session = await db.collection('appSessions').findOne({ sessionId: appSessionId });
-    if (!session || session.role !== 'admin') return res.status(403).json({ error: 'Accès refusé' });
-    req.appUser = session;
-  }
+  if (db) { const session = await db.collection('appSessions').findOne({ sessionId: appSessionId }); if (!session || session.role !== 'admin') return res.status(403).json({ error: 'Accès refusé' }); req.appUser = session; }
   next();
 }
 
@@ -460,17 +348,10 @@ app.post('/api/app-login', async (req, res) => {
   if (!username || !password) return res.json({ success: false, error: 'Champs manquants' });
   try {
     const hash = hashPassword(password);
-    let user = null;
-    if (db) {
-      user = await db.collection('appUsers').findOne({ username, passwordHash: hash });
-    } else {
-      user = defaultAppUsers.find(u => u.username === username && u.passwordHash === hash);
-    }
-    if (!user) return res.json({ success: false, error: 'Nom d\'utilisateur ou mot de passe incorrect' });
+    let user = db ? await db.collection('appUsers').findOne({ username, passwordHash: hash }) : defaultAppUsers.find(u => u.username === username && u.passwordHash === hash);
+    if (!user) return res.json({ success: false, error: "Nom d'utilisateur ou mot de passe incorrect" });
     const sessionId = crypto_builtin.randomBytes(24).toString('hex');
-    if (db) {
-      await db.collection('appSessions').insertOne({ sessionId, username: user.username, role: user.role, createdAt: new Date() });
-    }
+    if (db) await db.collection('appSessions').insertOne({ sessionId, username: user.username, role: user.role, createdAt: new Date() });
     res.setHeader('Set-Cookie', `appSessionId=${sessionId}; HttpOnly; Path=/; Max-Age=86400; SameSite=Lax`);
     res.json({ success: true, role: user.role });
   } catch(e) { res.json({ success: false, error: e.message }); }
@@ -486,28 +367,19 @@ app.post('/api/app-logout', async (req, res) => {
 app.get('/api/app-status', async (req, res) => {
   const appSessionId = req.cookies.appSessionId;
   if (!appSessionId) return res.json({ loggedIn: false });
-  if (db) {
-    const session = await db.collection('appSessions').findOne({ sessionId: appSessionId });
-    if (!session) return res.json({ loggedIn: false });
-    return res.json({ loggedIn: true, username: session.username, role: session.role });
-  }
+  if (db) { const session = await db.collection('appSessions').findOne({ sessionId: appSessionId }); if (!session) return res.json({ loggedIn: false }); return res.json({ loggedIn: true, username: session.username, role: session.role }); }
   res.json({ loggedIn: false });
 });
 
 app.get('/api/app-users', requireAdmin, async (req, res) => {
   if (!db) return res.json([]);
-  const users = await db.collection('appUsers').find({}, { projection: { passwordHash: 0 } }).toArray();
-  res.json(users);
+  res.json(await db.collection('appUsers').find({}, { projection: { passwordHash: 0 } }).toArray());
 });
 
 app.post('/api/app-users/add', requireAdmin, async (req, res) => {
   const { username, password, role } = req.body;
   if (!username || !password || !role) return res.status(400).json({ error: 'Champs manquants' });
-  const passwordHash = hashPassword(password);
-  if (db) {
-    await db.collection('appUsers').deleteOne({ username });
-    await db.collection('appUsers').insertOne({ username, passwordHash, role });
-  }
+  if (db) { await db.collection('appUsers').deleteOne({ username }); await db.collection('appUsers').insertOne({ username, passwordHash: hashPassword(password), role }); }
   res.json({ success: true });
 });
 
@@ -528,7 +400,6 @@ app.post('/api/app-users/edit', requireAdmin, async (req, res) => {
   } catch(err) { res.status(500).json({ error: err.message }); }
 });
 
-// ─── Pages ────────────────────────────────────────────────────────────────────
 app.get('/', requireAppAuth, (req, res) => { res.sendFile(path.join(__dirname, 'index.html')); });
 app.get('/admin', requireAdmin, (req, res) => { res.sendFile(path.join(__dirname, 'admin.html')); });
 app.get('/import', requireAppAuth, (req, res) => { res.sendFile(path.join(__dirname, 'import.html')); });
@@ -536,30 +407,17 @@ app.get('/inventaire', requireAppAuth, (req, res) => { res.sendFile(path.join(__
 app.get('/production', requireAppAuth, (req, res) => { res.sendFile(path.join(__dirname, 'production.html')); });
 app.get('/planning', requireAppAuth, (req, res) => { res.sendFile(path.join(__dirname, 'planning.html')); });
 
-// ─── Inventory API ────────────────────────────────────────────────────────────
 const INVENTORY_PRODUCTS = [
-  'CAISSE 12x BAMBINO TOUTE GARNIE',
-  'CAISSE 8X MARGHERITA',
-  'CAISSE 8X MÉDITERRANÉENNE',
-  'CAISSE 8x PEPPERONI-BACON',
-  'CAISSE 8x TOUTE GARNIE',
-  'CAISSE BOULE DE PÂTE (20x unités)',
-  'PFPIZZ-AD',
-  'PFPIZZ-PEP',
-  'PFPIZZ-VEGE',
-  'PFPIZZA-MARG',
-  'PFPIZZFRO'
+  'CAISSE 12x BAMBINO TOUTE GARNIE','CAISSE 8X MARGHERITA','CAISSE 8X MÉDITERRANÉENNE',
+  'CAISSE 8x PEPPERONI-BACON','CAISSE 8x TOUTE GARNIE','CAISSE BOULE DE PÂTE (20x unités)',
+  'PFPIZZ-AD','PFPIZZ-PEP','PFPIZZ-VEGE','PFPIZZA-MARG','PFPIZZFRO'
 ];
 
 app.get('/api/inventory', requireAppAuth, async (req, res) => {
   try {
     if (!db) return res.status(500).json({ error: 'DB non connectée' });
     const items = await db.collection('inventory').find({}, { projection: { _id: 0 } }).toArray();
-    const result = INVENTORY_PRODUCTS.map(name => {
-      const found = items.find(i => i.name === name);
-      return { name, stock: found ? found.stock : 0, threshold: found ? (found.threshold || 10) : 10 };
-    });
-    res.json(result);
+    res.json(INVENTORY_PRODUCTS.map(name => { const f = items.find(i => i.name === name); return { name, stock: f ? f.stock : 0, threshold: f ? (f.threshold || 10) : 10 }; }));
   } catch(err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -598,12 +456,10 @@ app.post('/api/inventory/threshold', requireAdmin, async (req, res) => {
 app.get('/api/inventory/log', requireAppAuth, async (req, res) => {
   try {
     if (!db) return res.status(500).json({ error: 'DB non connectée' });
-    const log = await db.collection('productionLog').find({}).sort({ createdAt: -1 }).limit(100).toArray();
-    res.json(log);
+    res.json(await db.collection('productionLog').find({}).sort({ createdAt: -1 }).limit(100).toArray());
   } catch(err) { res.status(500).json({ error: err.message }); }
 });
 
-// ─── Planning API ─────────────────────────────────────────────────────────────
 app.get('/api/planning', requireAppAuth, async (req, res) => {
   try {
     if (!db) return res.status(500).json({ error: 'DB non connectée' });
@@ -631,7 +487,6 @@ app.delete('/api/planning/:id', requireAppAuth, async (req, res) => {
   } catch(err) { res.status(500).json({ error: err.message }); }
 });
 
-// ─── QuickBooks Webhook ───────────────────────────────────────────────────────
 const crypto_wb = require('crypto');
 
 app.post('/api/webhook-qb', async (req, res) => {
@@ -640,56 +495,39 @@ app.post('/api/webhook-qb', async (req, res) => {
   const signature = req.headers['intuit-signature'];
   if (webhookToken && signature) {
     const hash = crypto_wb.createHmac('sha256', webhookToken).update(rawBody).digest('base64');
-    if (hash !== signature) {
-      console.log('Webhook QB: signature invalide');
-      return res.status(401).json({ error: 'Invalid signature' });
-    }
+    if (hash !== signature) { console.log('Webhook QB: signature invalide'); return res.status(401).json({ error: 'Invalid signature' }); }
   }
   res.status(200).json({ success: true });
   try {
     const payload = JSON.parse(rawBody.toString());
-    const notifications = payload.eventNotifications || [];
-    for (const notif of notifications) {
+    for (const notif of (payload.eventNotifications || [])) {
       const realmId = notif.realmId;
-      const entities = notif.dataChangeEvent?.entities || [];
-      for (const entity of entities) {
-        if (entity.name !== 'Invoice') continue;
-        if (!['Create', 'Update'].includes(entity.operation)) continue;
+      for (const entity of (notif.dataChangeEvent?.entities || [])) {
+        if (entity.name !== 'Invoice' || !['Create', 'Update'].includes(entity.operation)) continue;
         const invoiceId = entity.id;
         console.log('Webhook QB: facture', entity.operation, invoiceId);
         try {
           const token = await getAnyValidToken();
-          const url = `https://quickbooks.api.intuit.com/v3/company/${realmId || token.realmId}/invoice/${invoiceId}?minorversion=65`;
-          const invRes = await fetch(url, { headers: { 'Authorization': 'Bearer ' + token.token, 'Accept': 'application/json' } });
-          const invData = await invRes.json();
+          const invData = await (await fetch(`https://quickbooks.api.intuit.com/v3/company/${realmId || token.realmId}/invoice/${invoiceId}?minorversion=65`, { headers: { 'Authorization': 'Bearer ' + token.token, 'Accept': 'application/json' } })).json();
           const invoice = invData.Invoice;
           if (!invoice) continue;
-          // Charger les produits QB si pas encore en cache
           if (qbProducts.length === 0) {
             try {
-              const prodRes = await fetch(`https://quickbooks.api.intuit.com/v3/company/${realmId || token.realmId}/query?query=SELECT * FROM Item WHERE Active=true MAXRESULTS 200&minorversion=65`,
-                { headers: { 'Authorization': 'Bearer ' + token.token, 'Accept': 'application/json' } });
-              const prodData = await prodRes.json();
+              const prodData = await (await fetch(`https://quickbooks.api.intuit.com/v3/company/${realmId || token.realmId}/query?query=SELECT * FROM Item WHERE Active=true MAXRESULTS 200&minorversion=65`, { headers: { 'Authorization': 'Bearer ' + token.token, 'Accept': 'application/json' } })).json();
               qbProducts = (prodData.QueryResponse?.Item || []).filter(i => ['Service','Inventory','NonInventory'].includes(i.Type));
             } catch(e) { console.error('Erreur chargement produits QB:', e.message); }
           }
-          const lines = invoice.Line || [];
-          for (const line of lines) {
+          for (const line of (invoice.Line || [])) {
             if (line.DetailType !== 'SalesItemLineDetail') continue;
             const detail = line.SalesItemLineDetail;
             const qty = detail?.Qty || 0;
             const itemId = detail?.ItemRef?.value;
             if (!qty || !itemId) continue;
-            const product = qbProducts.find(p => p.Id === itemId);
-            const productName = product?.Name || '';
+            const productName = qbProducts.find(p => p.Id === itemId)?.Name || '';
             if (!productName || !INVENTORY_PRODUCTS.includes(productName)) continue;
             if (db) {
               await db.collection('inventory').updateOne({ name: productName }, { $inc: { stock: -qty } }, { upsert: true });
-              await db.collection('productionLog').insertOne({
-                name: productName, qty: -qty,
-                note: 'Facture QB #' + (invoice.DocNumber || invoiceId) + ' (webhook)',
-                type: 'deduction', createdAt: new Date(), createdBy: 'quickbooks-webhook'
-              });
+              await db.collection('productionLog').insertOne({ name: productName, qty: -qty, note: 'Facture QB #' + (invoice.DocNumber || invoiceId) + ' (webhook)', type: 'deduction', createdAt: new Date(), createdBy: 'quickbooks-webhook' });
               console.log('Inventaire déduit:', productName, '-' + qty);
             }
           }
@@ -700,11 +538,8 @@ app.post('/api/webhook-qb', async (req, res) => {
 });
 
 app.get('*', (req, res) => {
-  if (req.path.startsWith('/api/') || req.path === '/callback') {
-    res.status(404).json({ error: 'Not found' });
-  } else {
-    res.sendFile(path.join(__dirname, 'index.html'));
-  }
+  if (req.path.startsWith('/api/') || req.path === '/callback') { res.status(404).json({ error: 'Not found' }); }
+  else { res.sendFile(path.join(__dirname, 'index.html')); }
 });
 
 const PORT = process.env.PORT || 3000;
