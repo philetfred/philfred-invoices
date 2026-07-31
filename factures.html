@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Phil & Fred — Factures</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.44.0/tabler-icons.min.css">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f5; min-height: 100vh; }
+  .header { background: #1a1a1a; color: white; padding: 16px 24px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  .logo-text { font-size: 22px; font-weight: 500; }
+  .logo-text span { color: #e63946; }
+  .sub { font-size: 11px; color: #888; letter-spacing: 2px; text-transform: uppercase; }
+  .nav-links { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+  .nav-btn { background: none; border: 1px solid #444; color: #ccc; padding: 7px 13px; border-radius: 8px; cursor: pointer; font-size: 13px; text-decoration: none; display: flex; align-items: center; gap: 5px; }
+  .nav-btn:hover { background: #333; color: white; }
+  .nav-btn.active { background: #e63946; border-color: #e63946; color: white; }
+  .container { max-width: 900px; margin: 32px auto; padding: 0 16px; }
+  .top-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; gap: 12px; flex-wrap: wrap; }
+  .top-row h2 { font-size: 20px; font-weight: 600; color: #1a1a1a; }
+  .top-row p { font-size: 13px; color: #888; margin-top: 2px; }
+  .btn-clear { background: #fef2f2; border: 1px solid #fecaca; color: #dc2626; padding: 9px 16px; border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer; display: flex; align-items: center; gap: 6px; }
+  .btn-clear:hover { background: #fee2e2; }
+  .empty { text-align: center; padding: 48px; color: #888; font-size: 14px; background: white; border-radius: 12px; border: 1px solid #e5e5e5; }
+  .inv-card { background: white; border-radius: 12px; border: 1px solid #e5e5e5; padding: 20px; margin-bottom: 16px; }
+  .inv-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+  .inv-client { font-size: 16px; font-weight: 600; color: #1a1a1a; }
+  .inv-meta { font-size: 12px; color: #888; margin-top: 3px; }
+  .inv-total { font-size: 18px; font-weight: 700; color: #1a1a1a; text-align: right; }
+  .inv-actions { display: flex; gap: 8px; margin-top: 12px; }
+  .btn-outline { background: none; border: 1px solid #e5e5e5; color: #666; padding: 7px 13px; border-radius: 8px; font-size: 12px; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; text-decoration: none; }
+  .btn-outline:hover { border-color: #e63946; color: #e63946; }
+  .items-summary { margin-top: 10px; font-size: 13px; color: #555; }
+  .items-summary div { padding: 3px 0; }
+  .edit-panel { display: none; margin-top: 16px; padding-top: 16px; border-top: 1px solid #f0f0f0; }
+  .edit-panel.visible { display: block; }
+  .edit-row { display: grid; grid-template-columns: 2fr 70px 100px 36px; gap: 8px; align-items: center; margin-bottom: 8px; }
+  .edit-row select, .edit-row input { padding: 8px 10px; border-radius: 8px; border: 1px solid #e5e5e5; font-size: 13px; background: #fafafa; width: 100%; }
+  .remove-btn { background: none; border: none; color: #ccc; cursor: pointer; padding: 6px; border-radius: 6px; font-size: 18px; line-height: 1; }
+  .remove-btn:hover { color: #e63946; }
+  .add-item-btn { background: none; border: 1px dashed #e5e5e5; color: #888; padding: 7px 14px; border-radius: 8px; cursor: pointer; font-size: 12px; width: 100%; margin-top: 4px; }
+  .add-item-btn:hover { border-color: #e63946; color: #e63946; }
+  .edit-actions { display: flex; gap: 8px; margin-top: 14px; }
+  .btn-save { background: #e63946; color: white; border: none; padding: 9px 16px; border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer; }
+  .btn-save:hover { background: #c1121f; }
+  .btn-save:disabled { background: #ccc; cursor: not-allowed; }
+  .btn-cancel { background: none; border: 1px solid #e5e5e5; color: #888; padding: 9px 16px; border-radius: 8px; font-size: 13px; cursor: pointer; }
+  .btn-cancel:hover { border-color: #888; color: #1a1a1a; }
+  .status-msg { font-size: 12px; margin-top: 8px; }
+  .status-msg.ok { color: #16a34a; }
+  .status-msg.err { color: #dc2626; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <div class="logo-text">Phil <span>&</span> Fred</div>
+    <div class="sub">Pizzeria · Factures</div>
+  </div>
+  <div class="nav-links">
+    <a href="/" class="nav-btn"><i class="ti ti-file-invoice"></i> Facturation</a>
+    <a href="/factures" class="nav-btn active"><i class="ti ti-receipt"></i> Factures</a>
+    <a href="/inventaire" class="nav-btn"><i class="ti ti-box"></i> Inventaire</a>
+    <a href="/production" class="nav-btn"><i class="ti ti-plus"></i> Production</a>
+    <a href="/planning" class="nav-btn"><i class="ti ti-calendar"></i> Planning</a>
+  </div>
+</div>
+
+<div class="container">
+
+  <div class="top-row">
+    <div>
+      <h2>Factures créées cette semaine</h2>
+      <p>Seulement les factures faites depuis cette app (pas celles créées directement dans QuickBooks).</p>
+    </div>
+    <button class="btn-clear" id="clear-btn" onclick="clearWeek()" style="display:none;">
+      <i class="ti ti-trash"></i> Vider la semaine
+    </button>
+  </div>
+
+  <div id="invoices-list"><div class="empty">Chargement...</div></div>
+
+</div>
+
+<script>
+let isAdmin = false;
+let qbProducts = [];
+let invoices = [];
+
+async function init() {
+  const res = await fetch('/api/app-status');
+  const data = await res.json();
+  if (!data.loggedIn) { window.location.href = '/login'; return; }
+  isAdmin = data.role === 'admin';
+  if (isAdmin) document.getElementById('clear-btn').style.display = 'flex';
+  loadProducts();
+  await loadInvoices();
+}
+
+async function loadProducts() {
+  try {
+    const res = await fetch('/api/qb', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: 'SELECT * FROM Item WHERE Active=true MAXRESULTS 200' })
+    });
+    const data = await res.json();
+    qbProducts = (data.QueryResponse?.Item || []).filter(i => ['Service','Inventory','NonInventory'].includes(i.Type));
+  } catch(e) { console.error('Failed to load products', e); }
+}
+
+function fmt(n) { return (n || 0).toLocaleString('fr-CA', { style: 'currency', currency: 'CAD' }); }
+
+async function loadInvoices() {
+  try {
+    const res = await fetch('/api/app-invoices');
+    invoices = await res.json();
+    render();
+  } catch(e) {
+    document.getElementById('invoices-list').innerHTML = '<div class="empty">Erreur de chargement.</div>';
+  }
+}
+
+function render() {
+  const container = document.getElementById('invoices-list');
+  if (!invoices.length) {
+    container.innerHTML = '<div class="empty">Aucune facture cette semaine. Les factures créées depuis la page Facturation ou Import apparaîtront ici automatiquement.</div>';
+    return;
+  }
+  container.innerHTML = invoices.map(inv => {
+    const date = inv.createdAt ? new Date(inv.createdAt).toLocaleDateString('fr-CA', { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+    const itemsHtml = (inv.lines || []).map(l =>
+      '<div>' + (l.itemName || l.productName || '?') + ' × ' + l.qty + ' @ ' + fmt(l.unitPrice) + '</div>'
+    ).join('');
+    return `
+    <div class="inv-card" id="card-${inv.invoiceId}">
+      <div class="inv-head">
+        <div>
+          <div class="inv-client">${inv.customerName || 'Client inconnu'} <span style="font-size:12px;color:#aaa;font-weight:400;">#${inv.docNumber || inv.invoiceId}</span></div>
+          <div class="inv-meta">${date}${inv.createdBy ? ' · par ' + inv.createdBy : ''}${inv.updatedAt ? ' · modifiée' : ''}</div>
+        </div>
+        <div class="inv-total">${fmt(inv.totalAmt)}</div>
+      </div>
+      <div class="items-summary">${itemsHtml}</div>
+      <div class="inv-actions">
+        <a class="btn-outline" href="https://app.qbo.intuit.com/app/invoice?txnId=${inv.invoiceId}" target="_blank"><i class="ti ti-external-link"></i> Voir dans QuickBooks</a>
+        <button class="btn-outline" onclick="toggleEdit('${inv.invoiceId}')"><i class="ti ti-pencil"></i> Modifier</button>
+      </div>
+      <div class="edit-panel" id="edit-${inv.invoiceId}">
+        <div id="edit-rows-${inv.invoiceId}"></div>
+        <button class="add-item-btn" onclick="addEditRow('${inv.invoiceId}')"><i class="ti ti-plus"></i> Ajouter un item</button>
+        <div class="edit-actions">
+          <button class="btn-save" id="save-btn-${inv.invoiceId}" onclick="saveEdit('${inv.invoiceId}')">Enregistrer dans QuickBooks</button>
+          <button class="btn-cancel" onclick="toggleEdit('${inv.invoiceId}')">Annuler</button>
+        </div>
+        <div class="status-msg" id="status-${inv.invoiceId}"></div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function productOptionsHtml(selectedId) {
+  return '<option value="">— Produit —</option>' + qbProducts.map(p =>
+    `<option value="${p.Id}" data-price="${p.UnitPrice||0}" ${p.Id === selectedId ? 'selected' : ''}>${p.Name}</option>`
+  ).join('');
+}
+
+function toggleEdit(invoiceId) {
+  const panel = document.getElementById('edit-' + invoiceId);
+  const willOpen = !panel.classList.contains('visible');
+  panel.classList.toggle('visible');
+  if (willOpen) buildEditRows(invoiceId);
+}
+
+function buildEditRows(invoiceId) {
+  const inv = invoices.find(i => i.invoiceId === invoiceId);
+  const rowsDiv = document.getElementById('edit-rows-' + invoiceId);
+  rowsDiv.innerHTML = '';
+  (inv.lines || []).forEach(l => addEditRow(invoiceId, l));
+}
+
+function addEditRow(invoiceId, line) {
+  const rowsDiv = document.getElementById('edit-rows-' + invoiceId);
+  const row = document.createElement('div');
+  row.className = 'edit-row';
+  const itemId = line?.itemId || '';
+  row.innerHTML = `
+    <select class="line-product">${productOptionsHtml(itemId)}</select>
+    <input type="number" class="line-qty" value="${line?.qty || 1}" min="1" />
+    <input type="number" class="line-price" value="${(line?.unitPrice || 0).toFixed(2)}" step="0.01" />
+    <button class="remove-btn" onclick="this.closest('.edit-row').remove()">×</button>`;
+  row.querySelector('.line-product').addEventListener('change', function() {
+    const opt = this.options[this.selectedIndex];
+    const price = parseFloat(opt.getAttribute('data-price')) || 0;
+    row.querySelector('.line-price').value = price.toFixed(2);
+  });
+  rowsDiv.appendChild(row);
+}
+
+async function saveEdit(invoiceId) {
+  const rowsDiv = document.getElementById('edit-rows-' + invoiceId);
+  const lines = [];
+  let valid = true;
+  rowsDiv.querySelectorAll('.edit-row').forEach(row => {
+    const sel = row.querySelector('.line-product');
+    const qty = parseFloat(row.querySelector('.line-qty').value) || 0;
+    const unitPrice = parseFloat(row.querySelector('.line-price').value) || 0;
+    if (!sel.value || qty <= 0) { valid = false; return; }
+    lines.push({
+      itemId: sel.value,
+      itemName: sel.options[sel.selectedIndex].text,
+      qty, unitPrice,
+      taxCode: '3'
+    });
+  });
+  if (!valid || !lines.length) { alert('Ajoute au moins un item valide.'); return; }
+
+  const btn = document.getElementById('save-btn-' + invoiceId);
+  const statusEl = document.getElementById('status-' + invoiceId);
+  btn.disabled = true;
+  btn.textContent = 'Enregistrement...';
+  statusEl.textContent = '';
+
+  try {
+    const res = await fetch('/api/app-invoices/' + invoiceId, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lines })
+    });
+    const data = await res.json();
+    if (data.success) {
+      statusEl.className = 'status-msg ok';
+      statusEl.textContent = '✅ Facture mise à jour dans QuickBooks' + (data.inventoryChanges?.length ? ' — inventaire ajusté.' : '.');
+      await loadInvoices();
+    } else {
+      statusEl.className = 'status-msg err';
+      statusEl.textContent = 'Erreur : ' + (data.error || 'inconnue');
+    }
+  } catch(e) {
+    statusEl.className = 'status-msg err';
+    statusEl.textContent = 'Erreur réseau.';
+  }
+  btn.disabled = false;
+  btn.textContent = 'Enregistrer dans QuickBooks';
+}
+
+async function clearWeek() {
+  if (!confirm('Vider complètement la liste des factures de la semaine ? Cette action est définitive (les factures restent bien dans QuickBooks, seule cette liste est vidée).')) return;
+  try {
+    const res = await fetch('/api/app-invoices', { method: 'DELETE' });
+    const data = await res.json();
+    if (data.success) { await loadInvoices(); }
+    else { alert('Erreur : ' + (data.error || 'inconnue')); }
+  } catch(e) { alert('Erreur réseau.'); }
+}
+
+init();
+</script>
+</body>
+</html>
