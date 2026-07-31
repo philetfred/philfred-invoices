@@ -5,9 +5,13 @@ const crypto = require('crypto');
 const { MongoClient } = require('mongodb');
 
 const app = express();
+
+// ─── Raw body parser pour webhook QB (doit être AVANT express.json()) ─────────
+app.use('/api/webhook-qb', express.raw({ type: '*/*' }));
+
 app.use(express.json());
 
-// ─── Simple cookie parser (no dependency needed) ───────────────────────────────
+// ─── Simple cookie parser ───────────────────────────────────────────────────
 app.use((req, res, next) => {
   req.cookies = {};
   const header = req.headers.cookie;
@@ -30,7 +34,6 @@ app.use(express.static(path.join(__dirname)));
 const MONGODB_URI = process.env.MONGODB_URI;
 let db = null;
 
-// Default users (stored in MongoDB, initialized on first run)
 const defaultAppUsers = [
   { username: 'Fred',  passwordHash: '7d301c9cefaf53d6f7b43a7cb228e18f8466c62f62fe87aaf621132eba509bb0', role: 'admin' },
   { username: 'AlexB', passwordHash: 'f5286a7722c969aee390525c7309e98864bd9057b6983c600469b80d31ad4997', role: 'employe' },
@@ -52,19 +55,16 @@ async function connectMongo() {
     await client.connect();
     db = client.db('philfred');
     console.log('Connected to MongoDB');
-    // Initialize price rules in DB if empty
     const count = await db.collection('priceRules').countDocuments();
     if (count === 0) {
       await db.collection('priceRules').insertMany(defaultPriceRules);
       console.log('Price rules initialized in MongoDB');
     }
-    // Initialize app users if empty
     const userCount = await db.collection('appUsers').countDocuments();
     if (userCount === 0) {
       await db.collection('appUsers').insertMany(defaultAppUsers);
       console.log('App users initialized in MongoDB');
     }
-    // Create index on appSessions for faster lookup
     await db.collection('appSessions').createIndex({ sessionId: 1 });
     await db.collection('appUsers').createIndex({ username: 1 });
   } catch(err) {
@@ -72,11 +72,7 @@ async function connectMongo() {
   }
 }
 
-// ─── Session Management (multi-utilisateur) ────────────────────────────────────
-// Chaque navigateur a un cookie 'sessionId' unique. Les tokens QuickBooks
-// sont stockés dans MongoDB, indexés par sessionId, pour permettre à
-// plusieurs personnes de se connecter avec leur propre compte QB en même temps.
-
+// ─── Session Management ────────────────────────────────────────────────────────
 function getOrCreateSessionId(req, res) {
   let sessionId = req.cookies.sessionId;
   if (!sessionId) {
@@ -105,39 +101,30 @@ async function getSessionToken(sessionId) {
   return memorySessions[sessionId] || null;
 }
 
-// Fallback en mémoire si MongoDB n'est pas connecté
 const memorySessions = {};
 
-// Config — ces valeurs viennent des variables d'environnement Render
 const CLIENT_ID = process.env.QB_CLIENT_ID;
 const CLIENT_SECRET = process.env.QB_CLIENT_SECRET;
 const REDIRECT_URI = process.env.QB_REDIRECT_URI || 'https://philfred-invoices.onrender.com/callback';
 
 // ─── OAuth Flow ───────────────────────────────────────────────────────────────
-
-// Step 1: Redirect to QuickBooks login
 app.get('/auth', (req, res) => {
   const sessionId = getOrCreateSessionId(req, res);
   const scope = 'com.intuit.quickbooks.accounting';
-  // On encode le sessionId dans le state pour le retrouver au callback
   const state = sessionId + '.' + Math.random().toString(36).substring(7);
   const authUrl = `https://appcenter.intuit.com/connect/oauth2?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=code&scope=${scope}&state=${state}&prompt=select_account`;
   res.redirect(authUrl);
 });
 
-// Step 2: QuickBooks redirects back here with code
 app.get('/callback', async (req, res) => {
   const { code, realmId, state } = req.query;
   if (!code) return res.status(400).send('No code received');
-
-  // Récupère le sessionId à partir du state, ou du cookie en fallback
   let sessionId = state ? state.split('.')[0] : null;
   if (!sessionId || sessionId.length !== 48) {
     sessionId = getOrCreateSessionId(req, res);
   } else {
     res.setHeader('Set-Cookie', `sessionId=${sessionId}; HttpOnly; Path=/; Max-Age=2592000; SameSite=Lax`);
   }
-
   try {
     const credentials = Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64');
     const response = await fetch('https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer', {
@@ -149,7 +136,6 @@ app.get('/callback', async (req, res) => {
       },
       body: `grant_type=authorization_code&code=${code}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}`
     });
-
     const data = await response.json();
     if (data.access_token) {
       await saveSessionToken(sessionId, {
@@ -168,14 +154,10 @@ app.get('/callback', async (req, res) => {
 });
 
 // ─── Token Management ─────────────────────────────────────────────────────────
-
 async function getValidToken(req, res) {
   const sessionId = getOrCreateSessionId(req, res);
   const session = await getSessionToken(sessionId);
-
   if (!session || !session.accessToken) throw new Error('Not authenticated');
-
-  // Refresh if expired or expiring in 5 min
   if (Date.now() > session.expiresAt - 300000) {
     const credentials = Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64');
     const response = await fetch('https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer', {
@@ -201,7 +183,6 @@ async function getValidToken(req, res) {
   return { token: session.accessToken, realmId: session.realmId };
 }
 
-// Obtenir un token valide sans session utilisateur (pour webhook)
 async function getAnyValidToken() {
   if (!db) throw new Error('DB non connectée');
   const session = await db.collection('sessions').findOne(
@@ -234,17 +215,14 @@ async function getAnyValidToken() {
   return { token: session.accessToken, realmId: session.realmId };
 }
 
-// Get customer details including price rules
+// ─── QB Products cache (pour webhook) ────────────────────────────────────────
+let qbProducts = [];
+
 app.get('/api/customer/:id', async (req, res) => {
   try {
     const { token, realmId } = await getValidToken(req, res);
     const url = `https://quickbooks.api.intuit.com/v3/company/${realmId}/customer/${req.params.id}?minorversion=65`;
-    const response = await fetch(url, {
-      headers: {
-        'Authorization': 'Bearer ' + token,
-        'Accept': 'application/json'
-      }
-    });
+    const response = await fetch(url, { headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' } });
     const data = await response.json();
     res.json(data);
   } catch (err) {
@@ -252,13 +230,10 @@ app.get('/api/customer/:id', async (req, res) => {
   }
 });
 
-// ─── Price Rules Storage ──────────────────────────────────────────────────────
-
+// ─── Price Rules ──────────────────────────────────────────────────────────────
 const defaultPriceRules = [
-  // 20% de marge
   { name: 'IGA extra Super Marché Famille Primeau inc. Beauharnois', type: 'percent', value: -20 },
   { name: 'IGA extra Super Marché Primeau et fils inc.', type: 'percent', value: -20 },
-  // 22% de marge
   { name: 'IGA extra Gladu (2747-6761 Québec Inc.)', type: 'percent', value: -22 },
   { name: 'IGA Extra Laprairie', type: 'percent', value: -22 },
   { name: 'IGA extra Les Marchés Lambert Chambly', type: 'percent', value: -22 },
@@ -268,7 +243,6 @@ const defaultPriceRules = [
   { name: 'IGA Groupe Pro 40 inc.', type: 'percent', value: -22 },
   { name: 'IGA Supermarché Laplante inc.', type: 'percent', value: -22 },
   { name: 'IGA Candiac Sobeys Capital Inc', type: 'percent', value: -22 },
-  // 25% de marge
   { name: 'Dépanneur Conrad-Gosselin Inc.', type: 'percent', value: -25 },
   { name: 'Dépanneur Grimard - Richelieu (9070-9783 Qc Inc.)', type: 'percent', value: -25 },
   { name: 'Dépanneur Lionel-Boulet Inc.', type: 'percent', value: -25 },
@@ -298,11 +272,9 @@ const defaultPriceRules = [
   { name: 'IGA Supermarché St-Henri', type: 'percent', value: -25 },
   { name: 'IGA Valérie et Martin Longueuil', type: 'percent', value: -25 },
   { name: 'Supermarché Famille Picard #8615', type: 'percent', value: -25 },
-  // 30% de marge
   { name: 'IGA extra Marché Vincent inc.', type: 'percent', value: -30 },
   { name: 'Pasquier Delson', type: 'percent', value: -30 },
   { name: 'Pasquier St-Jean-sur-Richelieu', type: 'percent', value: -30 },
-  // Super C -8$ fixe
   { name: 'super_c_pattern', type: 'pattern_fixed', value: -8, pattern: 'super c' }
 ];
 
@@ -315,9 +287,7 @@ app.get('/api/price-rules', async (req, res) => {
       return res.json(rules);
     }
     res.json(priceRules);
-  } catch(err) {
-    res.json(priceRules);
-  }
+  } catch(err) { res.json(priceRules); }
 });
 
 app.post('/api/price-rules', async (req, res) => {
@@ -325,13 +295,9 @@ app.post('/api/price-rules', async (req, res) => {
     if (db) {
       await db.collection('priceRules').deleteMany({});
       if (req.body.length > 0) await db.collection('priceRules').insertMany(req.body);
-    } else {
-      priceRules = req.body;
-    }
+    } else { priceRules = req.body; }
     res.json({ success: true });
-  } catch(err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch(err) { res.status(500).json({ error: err.message }); }
 });
 
 app.post('/api/price-rules/add', async (req, res) => {
@@ -345,9 +311,7 @@ app.post('/api/price-rules/add', async (req, res) => {
       priceRules.push(rule);
     }
     res.json({ success: true });
-  } catch(err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch(err) { res.status(500).json({ error: err.message }); }
 });
 
 app.delete('/api/price-rules/:index', async (req, res) => {
@@ -355,61 +319,34 @@ app.delete('/api/price-rules/:index', async (req, res) => {
   try {
     if (db) {
       const rules = await db.collection('priceRules').find({}, { projection: { _id: 0 } }).toArray();
-      if (rules[index]) {
-        await db.collection('priceRules').deleteOne({ name: rules[index].name });
-      }
-    } else {
-      priceRules.splice(index, 1);
-    }
+      if (rules[index]) await db.collection('priceRules').deleteOne({ name: rules[index].name });
+    } else { priceRules.splice(index, 1); }
     res.json({ success: true });
-  } catch(err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch(err) { res.status(500).json({ error: err.message }); }
 });
 
 // ─── Tax Codes ────────────────────────────────────────────────────────────────
-
 app.get('/api/taxcodes', async (req, res) => {
   try {
     const { token, realmId } = await getValidToken(req, res);
     const url = `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=SELECT * FROM TaxCode&minorversion=65`;
-    const response = await fetch(url, {
-      headers: {
-        'Authorization': 'Bearer ' + token,
-        'Accept': 'application/json'
-      }
-    });
-    const data = await response.json();
-    res.json(data);
-  } catch (err) {
-    res.status(401).json({ error: err.message });
-  }
+    const response = await fetch(url, { headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' } });
+    res.json(await response.json());
+  } catch (err) { res.status(401).json({ error: err.message }); }
 });
 
-// Get next invoice number (checks Invoice AND CreditMemo)
 app.get('/api/next-invoice-number', async (req, res) => {
   try {
     const { token, realmId } = await getValidToken(req, res);
-    const headers = {
-      'Authorization': 'Bearer ' + token,
-      'Accept': 'application/json'
-    };
+    const headers = { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' };
     const base = `https://quickbooks.api.intuit.com/v3/company/${realmId}`;
-    
-    // Fetch invoices and credit memos in parallel
     const [invRes, cmRes] = await Promise.all([
       fetch(`${base}/query?query=SELECT DocNumber FROM Invoice MAXRESULTS 100&minorversion=65`, { headers }),
       fetch(`${base}/query?query=SELECT DocNumber FROM CreditMemo MAXRESULTS 100&minorversion=65`, { headers })
     ]);
-    
     const invData = await invRes.json();
     const cmData = await cmRes.json();
-    
-    const allDocs = [
-      ...(invData.QueryResponse?.Invoice || []),
-      ...(cmData.QueryResponse?.CreditMemo || [])
-    ];
-    
+    const allDocs = [...(invData.QueryResponse?.Invoice || []), ...(cmData.QueryResponse?.CreditMemo || [])];
     let maxNum = 0;
     allDocs.forEach(doc => {
       if (doc.DocNumber) {
@@ -417,42 +354,24 @@ app.get('/api/next-invoice-number', async (req, res) => {
         if (!isNaN(num) && num > maxNum) maxNum = num;
       }
     });
-    
     res.json({ nextNumber: String(maxNum + 1) });
-  } catch (err) {
-    res.status(401).json({ error: err.message });
-  }
+  } catch (err) { res.status(401).json({ error: err.message }); }
 });
-
-// ─── Status ───────────────────────────────────────────────────────────────────
 
 app.get('/api/status', async (req, res) => {
   const sessionId = getOrCreateSessionId(req, res);
   const session = await getSessionToken(sessionId);
-  res.json({
-    connected: !!(session && session.accessToken),
-    realmId: session ? session.realmId : null
-  });
+  res.json({ connected: !!(session && session.accessToken), realmId: session ? session.realmId : null });
 });
-
-// ─── QuickBooks API Proxy ─────────────────────────────────────────────────────
 
 app.post('/api/qb', async (req, res) => {
   const { query } = req.body;
   try {
     const { token, realmId } = await getValidToken(req, res);
     const url = `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(query)}&minorversion=65`;
-    const response = await fetch(url, {
-      headers: {
-        'Authorization': 'Bearer ' + token,
-        'Accept': 'application/json'
-      }
-    });
-    const data = await response.json();
-    res.json(data);
-  } catch (err) {
-    res.status(401).json({ error: err.message });
-  }
+    const response = await fetch(url, { headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' } });
+    res.json(await response.json());
+  } catch (err) { res.status(401).json({ error: err.message }); }
 });
 
 app.post('/api/qb-post', async (req, res) => {
@@ -462,96 +381,56 @@ app.post('/api/qb-post', async (req, res) => {
     const url = `https://quickbooks.api.intuit.com/v3/company/${realmId}/${endpoint}?minorversion=65`;
     const response = await fetch(url, {
       method: 'POST',
-      headers: {
-        'Authorization': 'Bearer ' + token,
-        'Accept': 'application/json',
-        'Content-Type': 'application/json'
-      },
+      headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json', 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     });
+    // Cache les produits QB pour le webhook
     const data = await response.json();
     res.json(data);
-  } catch (err) {
-    res.status(401).json({ error: err.message });
-  }
+  } catch (err) { res.status(401).json({ error: err.message }); }
 });
-
-
-// ─── Parse PDF via Claude API ─────────────────────────────────────────────────
 
 app.post('/api/parse-pdf', async (req, res) => {
   const { pdfBase64 } = req.body;
   if (!pdfBase64) return res.status(400).json({ error: 'Missing pdfBase64' });
-
   const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
   if (!ANTHROPIC_API_KEY) return res.status(500).json({ error: 'ANTHROPIC_API_KEY not set on server' });
-
   try {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01'
-      },
+      headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
         max_tokens: 1000,
-        messages: [{
-          role: 'user',
-          content: [
-            {
-              type: 'document',
-              source: { type: 'base64', media_type: 'application/pdf', data: pdfBase64 }
-            },
-            {
-              type: 'text',
-              text: `Extract the purchase order data from this PDF. Return ONLY a valid JSON object (no markdown, no backticks) with this exact structure:
-{
-  "po_number": "the purchase order number (BON DE COMMANDE #)",
-  "supplier_name": "the store/magasin name (e.g. Pasquier St-Jean-sur-Richelieu)",
-  "delivery_date": "YYYY-MM-DD format of the planned delivery date",
-  "items": [
-    {
-      "description": "full product description from the PDF",
-      "cases": 4
-    }
-  ]
-}
-Return only the JSON, nothing else.`
-            }
-          ]
-        }]
+        messages: [{ role: 'user', content: [
+          { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: pdfBase64 } },
+          { type: 'text', text: `Extract the purchase order data from this PDF. Return ONLY a valid JSON object (no markdown, no backticks) with this exact structure:
+{"po_number":"the purchase order number","supplier_name":"the store name","delivery_date":"YYYY-MM-DD","items":[{"description":"full product description","cases":4}]}
+Return only the JSON, nothing else.` }
+        ]}]
       })
     });
-
     const data = await response.json();
     if (data.error) return res.status(500).json({ error: data.error.message });
     const text = data.content?.[0]?.text || '';
-    // Try to parse JSON from response
     let parsed;
-    try {
-      parsed = JSON.parse(text.trim());
-    } catch(e) {
+    try { parsed = JSON.parse(text.trim()); }
+    catch(e) {
       const match = text.match(/\{[\s\S]*\}/);
       if (match) parsed = JSON.parse(match[0]);
       else return res.status(500).json({ error: 'Could not parse Claude response', raw: text });
     }
     res.json(parsed);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // ─── App Authentication ───────────────────────────────────────────────────────
-
 const crypto_builtin = require('crypto');
 
 function hashPassword(password) {
   return crypto_builtin.createHash('sha256').update(password).digest('hex');
 }
 
-// Middleware — vérifie le cookie de session app (différent du token QB)
 async function requireAppAuth(req, res, next) {
   const appSessionId = req.cookies.appSessionId;
   if (!appSessionId) return res.redirect('/login');
@@ -574,16 +453,11 @@ async function requireAdmin(req, res, next) {
   next();
 }
 
-// Login page
-app.get('/login', (req, res) => {
-  res.sendFile(path.join(__dirname, 'login.html'));
-});
+app.get('/login', (req, res) => { res.sendFile(path.join(__dirname, 'login.html')); });
 
-// Login POST
 app.post('/api/app-login', async (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) return res.json({ success: false, error: 'Champs manquants' });
-
   try {
     const hash = hashPassword(password);
     let user = null;
@@ -593,35 +467,22 @@ app.post('/api/app-login', async (req, res) => {
       user = defaultAppUsers.find(u => u.username === username && u.passwordHash === hash);
     }
     if (!user) return res.json({ success: false, error: 'Nom d\'utilisateur ou mot de passe incorrect' });
-
-    // Create app session
     const sessionId = crypto_builtin.randomBytes(24).toString('hex');
     if (db) {
-      await db.collection('appSessions').insertOne({
-        sessionId,
-        username: user.username,
-        role: user.role,
-        createdAt: new Date()
-      });
+      await db.collection('appSessions').insertOne({ sessionId, username: user.username, role: user.role, createdAt: new Date() });
     }
     res.setHeader('Set-Cookie', `appSessionId=${sessionId}; HttpOnly; Path=/; Max-Age=86400; SameSite=Lax`);
     res.json({ success: true, role: user.role });
-  } catch(e) {
-    res.json({ success: false, error: e.message });
-  }
+  } catch(e) { res.json({ success: false, error: e.message }); }
 });
 
-// Logout
 app.post('/api/app-logout', async (req, res) => {
   const appSessionId = req.cookies.appSessionId;
-  if (appSessionId && db) {
-    await db.collection('appSessions').deleteOne({ sessionId: appSessionId });
-  }
+  if (appSessionId && db) await db.collection('appSessions').deleteOne({ sessionId: appSessionId });
   res.setHeader('Set-Cookie', 'appSessionId=; HttpOnly; Path=/; Max-Age=0');
   res.json({ success: true });
 });
 
-// App session status
 app.get('/api/app-status', async (req, res) => {
   const appSessionId = req.cookies.appSessionId;
   if (!appSessionId) return res.json({ loggedIn: false });
@@ -633,7 +494,6 @@ app.get('/api/app-status', async (req, res) => {
   res.json({ loggedIn: false });
 });
 
-// User management (admin only)
 app.get('/api/app-users', requireAdmin, async (req, res) => {
   if (!db) return res.json([]);
   const users = await db.collection('appUsers').find({}, { projection: { passwordHash: 0 } }).toArray();
@@ -656,33 +516,27 @@ app.delete('/api/app-users/:username', requireAdmin, async (req, res) => {
   res.json({ success: true });
 });
 
-app.get('/', requireAppAuth, (req, res) => {
-  res.sendFile(path.join(__dirname, 'index.html'));
+app.post('/api/app-users/edit', requireAdmin, async (req, res) => {
+  const { originalUsername, newUsername, newPassword, newRole } = req.body;
+  if (!originalUsername || !newUsername || !newRole) return res.status(400).json({ error: 'Champs manquants' });
+  try {
+    if (!db) return res.status(500).json({ error: 'DB non connectée' });
+    const updateFields = { username: newUsername, role: newRole };
+    if (newPassword && newPassword.trim() !== '') updateFields.passwordHash = hashPassword(newPassword);
+    await db.collection('appUsers').updateOne({ username: originalUsername }, { $set: updateFields });
+    res.json({ success: true });
+  } catch(err) { res.status(500).json({ error: err.message }); }
 });
 
-app.get('/admin', requireAppAuth, (req, res) => {
-  res.sendFile(path.join(__dirname, 'admin.html'));
-});
-
-app.get('/import', requireAppAuth, (req, res) => {
-  res.sendFile(path.join(__dirname, 'import.html'));
-});
-
-app.get('/inventaire', requireAppAuth, (req, res) => {
-  res.sendFile(path.join(__dirname, 'inventaire.html'));
-});
-
-app.get('/production', requireAppAuth, (req, res) => {
-  res.sendFile(path.join(__dirname, 'production.html'));
-});
-
-app.get('/planning', requireAppAuth, (req, res) => {
-  res.sendFile(path.join(__dirname, 'planning.html'));
-});
+// ─── Pages ────────────────────────────────────────────────────────────────────
+app.get('/', requireAppAuth, (req, res) => { res.sendFile(path.join(__dirname, 'index.html')); });
+app.get('/admin', requireAdmin, (req, res) => { res.sendFile(path.join(__dirname, 'admin.html')); });
+app.get('/import', requireAppAuth, (req, res) => { res.sendFile(path.join(__dirname, 'import.html')); });
+app.get('/inventaire', requireAppAuth, (req, res) => { res.sendFile(path.join(__dirname, 'inventaire.html')); });
+app.get('/production', requireAppAuth, (req, res) => { res.sendFile(path.join(__dirname, 'production.html')); });
+app.get('/planning', requireAppAuth, (req, res) => { res.sendFile(path.join(__dirname, 'planning.html')); });
 
 // ─── Inventory API ────────────────────────────────────────────────────────────
-
-// Produits d'inventaire (liste fixe basée sur les produits MAGASIN)
 const INVENTORY_PRODUCTS = [
   'CAISSE 12x BAMBINO TOUTE GARNIE',
   'CAISSE 8X MARGHERITA',
@@ -697,66 +551,40 @@ const INVENTORY_PRODUCTS = [
   'PFPIZZFRO'
 ];
 
-// GET stock actuel
 app.get('/api/inventory', requireAppAuth, async (req, res) => {
   try {
     if (!db) return res.status(500).json({ error: 'DB non connectée' });
     const items = await db.collection('inventory').find({}, { projection: { _id: 0 } }).toArray();
-    // Retourne tous les produits, avec stock 0 si pas encore dans la DB
     const result = INVENTORY_PRODUCTS.map(name => {
       const found = items.find(i => i.name === name);
       return { name, stock: found ? found.stock : 0, threshold: found ? (found.threshold || 10) : 10 };
     });
     res.json(result);
-  } catch(err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch(err) { res.status(500).json({ error: err.message }); }
 });
 
-// POST — Ajouter production (augmente le stock)
 app.post('/api/inventory/add', requireAppAuth, async (req, res) => {
   const { name, qty, note } = req.body;
   if (!name || !qty || qty <= 0) return res.status(400).json({ error: 'Données invalides' });
   try {
     if (!db) return res.status(500).json({ error: 'DB non connectée' });
-    await db.collection('inventory').updateOne(
-      { name },
-      { $inc: { stock: qty }, $setOnInsert: { threshold: 10 } },
-      { upsert: true }
-    );
-    // Log production
-    await db.collection('productionLog').insertOne({
-      name, qty, note: note || '', type: 'production',
-      createdAt: new Date(), createdBy: req.appUser?.username || 'unknown'
-    });
+    await db.collection('inventory').updateOne({ name }, { $inc: { stock: qty }, $setOnInsert: { threshold: 10 } }, { upsert: true });
+    await db.collection('productionLog').insertOne({ name, qty, note: note || '', type: 'production', createdAt: new Date(), createdBy: req.appUser?.username || 'unknown' });
     res.json({ success: true });
-  } catch(err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch(err) { res.status(500).json({ error: err.message }); }
 });
 
-// POST — Déduire stock (vente manuelle ou correction)
 app.post('/api/inventory/deduct', requireAppAuth, async (req, res) => {
   const { name, qty, note } = req.body;
   if (!name || !qty || qty <= 0) return res.status(400).json({ error: 'Données invalides' });
   try {
     if (!db) return res.status(500).json({ error: 'DB non connectée' });
-    await db.collection('inventory').updateOne(
-      { name },
-      { $inc: { stock: -qty } },
-      { upsert: true }
-    );
-    await db.collection('productionLog').insertOne({
-      name, qty: -qty, note: note || '', type: 'deduction',
-      createdAt: new Date(), createdBy: req.appUser?.username || 'unknown'
-    });
+    await db.collection('inventory').updateOne({ name }, { $inc: { stock: -qty } }, { upsert: true });
+    await db.collection('productionLog').insertOne({ name, qty: -qty, note: note || '', type: 'deduction', createdAt: new Date(), createdBy: req.appUser?.username || 'unknown' });
     res.json({ success: true });
-  } catch(err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch(err) { res.status(500).json({ error: err.message }); }
 });
 
-// POST — Modifier le seuil d'alerte d'un produit
 app.post('/api/inventory/threshold', requireAdmin, async (req, res) => {
   const { name, threshold } = req.body;
   if (!name || threshold === undefined) return res.status(400).json({ error: 'Données invalides' });
@@ -764,91 +592,62 @@ app.post('/api/inventory/threshold', requireAdmin, async (req, res) => {
     if (!db) return res.status(500).json({ error: 'DB non connectée' });
     await db.collection('inventory').updateOne({ name }, { $set: { threshold } }, { upsert: true });
     res.json({ success: true });
-  } catch(err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch(err) { res.status(500).json({ error: err.message }); }
 });
 
-// GET historique de production
 app.get('/api/inventory/log', requireAppAuth, async (req, res) => {
   try {
     if (!db) return res.status(500).json({ error: 'DB non connectée' });
-    const log = await db.collection('productionLog')
-      .find({})
-      .sort({ createdAt: -1 })
-      .limit(100)
-      .toArray();
+    const log = await db.collection('productionLog').find({}).sort({ createdAt: -1 }).limit(100).toArray();
     res.json(log);
-  } catch(err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch(err) { res.status(500).json({ error: err.message }); }
 });
 
 // ─── Planning API ─────────────────────────────────────────────────────────────
-
-// GET toutes les livraisons planifiées
 app.get('/api/planning', requireAppAuth, async (req, res) => {
   try {
     if (!db) return res.status(500).json({ error: 'DB non connectée' });
-    const plans = await db.collection('deliveryPlans')
-      .find({})
-      .sort({ deliveryDate: 1 })
-      .toArray();
+    const plans = await db.collection('deliveryPlans').find({}).sort({ deliveryDate: 1 }).toArray();
     res.json(plans.map(p => ({ ...p, _id: p._id.toString() })));
-  } catch(err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch(err) { res.status(500).json({ error: err.message }); }
 });
 
-// POST — Créer une livraison planifiée
 app.post('/api/planning/add', requireAppAuth, async (req, res) => {
   const { clientName, deliveryDate, items } = req.body;
   if (!clientName || !deliveryDate || !items?.length) return res.status(400).json({ error: 'Données invalides' });
   try {
     if (!db) return res.status(500).json({ error: 'DB non connectée' });
-    const result = await db.collection('deliveryPlans').insertOne({
-      clientName, deliveryDate, items,
-      createdAt: new Date(), createdBy: req.appUser?.username || 'unknown'
-    });
+    const result = await db.collection('deliveryPlans').insertOne({ clientName, deliveryDate, items, createdAt: new Date(), createdBy: req.appUser?.username || 'unknown' });
     res.json({ success: true, id: result.insertedId.toString() });
-  } catch(err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch(err) { res.status(500).json({ error: err.message }); }
 });
 
-// DELETE — Supprimer une livraison planifiée
 app.delete('/api/planning/:id', requireAppAuth, async (req, res) => {
   try {
     if (!db) return res.status(500).json({ error: 'DB non connectée' });
     const { ObjectId } = require('mongodb');
     await db.collection('deliveryPlans').deleteOne({ _id: new ObjectId(req.params.id) });
     res.json({ success: true });
-  } catch(err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.get('/auth', (req, res) => {
-  // handled above
+  } catch(err) { res.status(500).json({ error: err.message }); }
 });
 
 // ─── QuickBooks Webhook ───────────────────────────────────────────────────────
 const crypto_wb = require('crypto');
 
-app.post('/api/webhook-qb', express.raw({ type: 'application/json' }), async (req, res) => {
+app.post('/api/webhook-qb', async (req, res) => {
+  const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.from(JSON.stringify(req.body));
   const webhookToken = process.env.QB_WEBHOOK_TOKEN;
   const signature = req.headers['intuit-signature'];
   if (webhookToken && signature) {
-    const hash = crypto_wb.createHmac('sha256', webhookToken).update(req.body).digest('base64');
+    const hash = crypto_wb.createHmac('sha256', webhookToken).update(rawBody).digest('base64');
     if (hash !== signature) {
       console.log('Webhook QB: signature invalide');
       return res.status(401).json({ error: 'Invalid signature' });
     }
   }
-  // Répondre immédiatement à QB (obligatoire)
   res.status(200).json({ success: true });
   try {
-    const payload = JSON.parse(req.body.toString());
+    const payload = JSON.parse(rawBody.toString());
     const notifications = payload.eventNotifications || [];
     for (const notif of notifications) {
       const realmId = notif.realmId;
@@ -861,12 +660,19 @@ app.post('/api/webhook-qb', express.raw({ type: 'application/json' }), async (re
         try {
           const token = await getAnyValidToken();
           const url = `https://quickbooks.api.intuit.com/v3/company/${realmId || token.realmId}/invoice/${invoiceId}?minorversion=65`;
-          const invRes = await fetch(url, {
-            headers: { 'Authorization': 'Bearer ' + token.token, 'Accept': 'application/json' }
-          });
+          const invRes = await fetch(url, { headers: { 'Authorization': 'Bearer ' + token.token, 'Accept': 'application/json' } });
           const invData = await invRes.json();
           const invoice = invData.Invoice;
           if (!invoice) continue;
+          // Charger les produits QB si pas encore en cache
+          if (qbProducts.length === 0) {
+            try {
+              const prodRes = await fetch(`https://quickbooks.api.intuit.com/v3/company/${realmId || token.realmId}/query?query=SELECT * FROM Item WHERE Active=true MAXRESULTS 200&minorversion=65`,
+                { headers: { 'Authorization': 'Bearer ' + token.token, 'Accept': 'application/json' } });
+              const prodData = await prodRes.json();
+              qbProducts = (prodData.QueryResponse?.Item || []).filter(i => ['Service','Inventory','NonInventory'].includes(i.Type));
+            } catch(e) { console.error('Erreur chargement produits QB:', e.message); }
+          }
           const lines = invoice.Line || [];
           for (const line of lines) {
             if (line.DetailType !== 'SalesItemLineDetail') continue;
@@ -878,11 +684,7 @@ app.post('/api/webhook-qb', express.raw({ type: 'application/json' }), async (re
             const productName = product?.Name || '';
             if (!productName || !INVENTORY_PRODUCTS.includes(productName)) continue;
             if (db) {
-              await db.collection('inventory').updateOne(
-                { name: productName },
-                { $inc: { stock: -qty } },
-                { upsert: true }
-              );
+              await db.collection('inventory').updateOne({ name: productName }, { $inc: { stock: -qty } }, { upsert: true });
               await db.collection('productionLog').insertOne({
                 name: productName, qty: -qty,
                 note: 'Facture QB #' + (invoice.DocNumber || invoiceId) + ' (webhook)',
@@ -891,18 +693,13 @@ app.post('/api/webhook-qb', express.raw({ type: 'application/json' }), async (re
               console.log('Inventaire déduit:', productName, '-' + qty);
             }
           }
-        } catch(e) {
-          console.error('Webhook QB erreur facture:', invoiceId, e.message);
-        }
+        } catch(e) { console.error('Webhook QB erreur facture:', invoiceId, e.message); }
       }
     }
-  } catch(e) {
-    console.error('Webhook QB parsing erreur:', e.message);
-  }
+  } catch(e) { console.error('Webhook QB parsing erreur:', e.message); }
 });
 
 app.get('*', (req, res) => {
-  // Only serve index.html for non-API routes
   if (req.path.startsWith('/api/') || req.path === '/callback') {
     res.status(404).json({ error: 'Not found' });
   } else {
