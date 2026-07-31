@@ -118,11 +118,20 @@ const PRODUCTS = [
   'PFPIZZ-PEP',
   'PFPIZZ-VEGE',
   'PFPIZZA-MARG',
-  'PFPIZZFRO'
+  'PFPIZZFRO',
+  'Pizza Bambino fromage',
+  'Pizza Bambino pepperoni',
+  'Pizza Bambino Toute Garnie',
+  'Pizza Bambino Végétarienne'
 ];
 
 let inventory = [];
 let planItemCount = 0;
+
+function unitFor(name) {
+  const item = inventory.find(i => i.name === name);
+  return item ? (item.unit || 'cs') : 'cs';
+}
 
 function productOptions(selected) {
   return PRODUCTS.map(p => '<option' + (p === selected ? ' selected' : '') + '>' + p + '</option>').join('');
@@ -214,16 +223,17 @@ async function loadPlans() {
       plan.items.forEach(item => {
         const invItem = inventory.find(i => i.name === item.name);
         const stock = invItem ? invItem.stock : 0;
+        const unit = unitFor(item.name);
         const needed = Math.max(0, item.qty - stock);
         let needClass, needStr;
         if (needed === 0) { needClass = 'need-ok'; needStr = '✅ Rien'; }
-        else if (needed <= item.qty * 0.5) { needClass = 'need-warn'; needStr = '⚠️ ' + needed + ' cs'; }
-        else { needClass = 'need-critical'; needStr = '🔴 ' + needed + ' cs'; }
+        else if (needed <= item.qty * 0.5) { needClass = 'need-warn'; needStr = '⚠️ ' + needed + ' ' + unit; }
+        else { needClass = 'need-critical'; needStr = '🔴 ' + needed + ' ' + unit; }
 
         rows += '<tr>' +
           '<td style="font-weight:500;">' + item.name + '</td>' +
-          '<td style="text-align:center;">' + item.qty + ' cs</td>' +
-          '<td style="text-align:center;">' + stock + ' cs</td>' +
+          '<td style="text-align:center;">' + item.qty + ' ' + unit + '</td>' +
+          '<td style="text-align:center;">' + stock + ' ' + unit + '</td>' +
           '<td style="text-align:center;" class="' + needClass + '">' + needStr + '</td>' +
           '</tr>';
       });
