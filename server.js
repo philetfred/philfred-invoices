@@ -91,6 +91,10 @@ const REDIRECT_URI = process.env.QB_REDIRECT_URI || 'https://philfred-invoices.o
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
 const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || 'https://philfred-invoices.onrender.com/callback-google';
+// Pause/reprise du dépôt automatique des PDF dans Drive sans toucher au code:
+// mets la variable d'environnement DISABLE_DRIVE_UPLOAD=true sur Render pour
+// mettre en pause, retire-la (ou mets-la à autre chose) pour reprendre.
+const DRIVE_UPLOAD_ENABLED = process.env.DISABLE_DRIVE_UPLOAD !== 'true';
 
 app.get('/auth', (req, res) => {
   const sessionId = getOrCreateSessionId(req, res);
@@ -864,13 +868,17 @@ app.post('/api/webhook-qb', async (req, res) => {
           // ça ne se déclenche qu'une seule fois par facture (pas à chaque
           // Update). Ne bloque jamais la déduction d'inventaire si ça échoue
           // (ex: Google Drive pas encore connecté).
-          try {
-            const pdfBuffer = await fetchInvoicePdf(effectiveRealmId, invoiceId, token.token);
-            const clientName = sanitizeFileName(invoice.CustomerRef?.name || '');
-            const fileName = (clientName || ('Facture ' + (invoice.DocNumber || invoiceId))) + '.pdf';
-            await uploadPdfToDrive(fileName, pdfBuffer);
-          } catch(e) {
-            console.warn('Google Drive: dépôt PDF échoué pour facture', invoiceId, '-', e.message);
+          if (DRIVE_UPLOAD_ENABLED) {
+            try {
+              const pdfBuffer = await fetchInvoicePdf(effectiveRealmId, invoiceId, token.token);
+              const clientName = sanitizeFileName(invoice.CustomerRef?.name || '');
+              const fileName = (clientName || ('Facture ' + (invoice.DocNumber || invoiceId))) + '.pdf';
+              await uploadPdfToDrive(fileName, pdfBuffer);
+            } catch(e) {
+              console.warn('Google Drive: dépôt PDF échoué pour facture', invoiceId, '-', e.message);
+            }
+          } else {
+            console.log('Google Drive: dépôt PDF en pause (DISABLE_DRIVE_UPLOAD=true) - ignoré pour la facture', invoiceId);
           }
 
           if (qbProducts.length === 0) { await loadQbProducts(effectiveRealmId, token.token); }
