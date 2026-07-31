@@ -87,6 +87,11 @@ const CLIENT_ID = process.env.QB_CLIENT_ID;
 const CLIENT_SECRET = process.env.QB_CLIENT_SECRET;
 const REDIRECT_URI = process.env.QB_REDIRECT_URI || 'https://philfred-invoices.onrender.com/callback';
 
+// ─── Google Drive (dépôt automatique des PDF de factures) ─────────────────
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
+const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || 'https://philfred-invoices.onrender.com/callback-google';
+
 app.get('/auth', (req, res) => {
   const sessionId = getOrCreateSessionId(req, res);
   const scope = 'com.intuit.quickbooks.accounting';
@@ -115,6 +120,114 @@ app.get('/callback', async (req, res) => {
       res.redirect('/?connected=true');
     } else { console.error('QB OAuth: échec auth_failed', data); res.redirect('/?error=auth_failed'); }
   } catch (err) { console.error('QB OAuth callback erreur:', err); res.redirect('/?error=' + err.message); }
+});
+
+// ─── Google Drive OAuth (connexion unique, indépendante de QuickBooks) ─────
+app.get('/auth-google', requireAdmin, (req, res) => {
+  if (!GOOGLE_CLIENT_ID) return res.status(500).send('GOOGLE_CLIENT_ID non configuré sur le serveur.');
+  const scope = 'https://www.googleapis.com/auth/drive.file';
+  const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${GOOGLE_CLIENT_ID}&redirect_uri=${encodeURIComponent(GOOGLE_REDIRECT_URI)}&response_type=code&scope=${encodeURIComponent(scope)}&access_type=offline&prompt=consent`;
+  res.redirect(authUrl);
+});
+
+app.get('/callback-google', async (req, res) => {
+  const { code } = req.query;
+  if (!code) return res.status(400).send('No code received');
+  try {
+    const response = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code, client_id: GOOGLE_CLIENT_ID, client_secret: GOOGLE_CLIENT_SECRET,
+        redirect_uri: GOOGLE_REDIRECT_URI, grant_type: 'authorization_code'
+      })
+    });
+    const data = await response.json();
+    if (data.access_token) {
+      if (db) {
+        const update = { accessToken: data.access_token, expiresAt: Date.now() + (data.expires_in * 1000), connectedAt: new Date() };
+        if (data.refresh_token) update.refreshToken = data.refresh_token; // Google ne le renvoie pas toujours (seulement à la 1ère autorisation)
+        await db.collection('googleAuth').updateOne({ key: 'default' }, { $set: update }, { upsert: true });
+      }
+      console.log('Google Drive: connecté avec succès.');
+      res.redirect('/?googleConnected=true');
+    } else {
+      console.error('Google OAuth: échec', data);
+      res.redirect('/?error=google_auth_failed');
+    }
+  } catch (err) { console.error('Google OAuth callback erreur:', err); res.redirect('/?error=' + err.message); }
+});
+
+async function getGoogleAccessToken() {
+  if (!db) throw new Error('DB non connectée');
+  const auth = await db.collection('googleAuth').findOne({ key: 'default' });
+  if (!auth || !auth.refreshToken) throw new Error('Google Drive non connecté (va sur /auth-google en tant qu\'admin)');
+  if (Date.now() > (auth.expiresAt || 0) - 300000) {
+    const response = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ refresh_token: auth.refreshToken, client_id: GOOGLE_CLIENT_ID, client_secret: GOOGLE_CLIENT_SECRET, grant_type: 'refresh_token' })
+    });
+    const data = await response.json();
+    if (!data.access_token) throw new Error('Google token refresh failed: ' + JSON.stringify(data));
+    await db.collection('googleAuth').updateOne({ key: 'default' }, { $set: { accessToken: data.access_token, expiresAt: Date.now() + (data.expires_in * 1000) } });
+    return data.access_token;
+  }
+  return auth.accessToken;
+}
+
+// Crée (une seule fois) un dossier "Factures QuickBooks - Phil & Fred" dans le
+// Drive de l'admin connecté, et retient son ID pour les prochains dépôts.
+async function getOrCreateDriveFolder() {
+  const auth = await db.collection('googleAuth').findOne({ key: 'default' });
+  if (auth && auth.folderId) return auth.folderId;
+  const accessToken = await getGoogleAccessToken();
+  const createRes = await fetch('https://www.googleapis.com/drive/v3/files', {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Factures QuickBooks - Phil & Fred', mimeType: 'application/vnd.google-apps.folder' })
+  });
+  const folder = await createRes.json();
+  if (!folder.id) throw new Error('Impossible de créer le dossier Drive: ' + JSON.stringify(folder));
+  await db.collection('googleAuth').updateOne({ key: 'default' }, { $set: { folderId: folder.id } });
+  console.log('Google Drive: dossier créé, id =', folder.id);
+  return folder.id;
+}
+
+async function fetchInvoicePdf(realmId, invoiceId, token) {
+  const res = await fetch(`https://quickbooks.api.intuit.com/v3/company/${realmId}/invoice/${invoiceId}/pdf?minorversion=65`, {
+    headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/pdf' }
+  });
+  if (!res.ok) throw new Error('QB PDF fetch failed: HTTP ' + res.status);
+  const arrayBuffer = await res.arrayBuffer();
+  return Buffer.from(arrayBuffer);
+}
+
+async function uploadPdfToDrive(fileName, pdfBuffer) {
+  const accessToken = await getGoogleAccessToken();
+  const folderId = await getOrCreateDriveFolder();
+  const boundary = 'philfred-boundary-314159265358979';
+  const metadata = { name: fileName, parents: [folderId] };
+  const multipartBody = Buffer.concat([
+    Buffer.from(`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n--${boundary}\r\nContent-Type: application/pdf\r\n\r\n`),
+    pdfBuffer,
+    Buffer.from(`\r\n--${boundary}--`)
+  ]);
+  const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer ' + accessToken, 'Content-Type': `multipart/related; boundary=${boundary}` },
+    body: multipartBody
+  });
+  const data = await res.json();
+  if (!data.id) throw new Error('Upload Drive échoué: ' + JSON.stringify(data));
+  console.log('Google Drive: fichier déposé, id =', data.id, '- nom =', fileName);
+  return data.id;
+}
+
+app.get('/api/google-status', requireAppAuth, async (req, res) => {
+  if (!db) return res.json({ connected: false });
+  const auth = await db.collection('googleAuth').findOne({ key: 'default' });
+  res.json({ connected: !!(auth && auth.refreshToken) });
 });
 
 async function getValidToken(req, res) {
@@ -721,6 +834,19 @@ app.post('/api/webhook-qb', async (req, res) => {
             }
           }
           if (!reserved) continue;
+
+          // ─── Dépôt automatique du PDF dans Google Drive ──────────────────
+          // Protégé par la même réservation que la déduction d'inventaire, donc
+          // ça ne se déclenche qu'une seule fois par facture (pas à chaque
+          // Update). Ne bloque jamais la déduction d'inventaire si ça échoue
+          // (ex: Google Drive pas encore connecté).
+          try {
+            const pdfBuffer = await fetchInvoicePdf(effectiveRealmId, invoiceId, token.token);
+            const fileName = 'Facture ' + (invoice.DocNumber || invoiceId) + '.pdf';
+            await uploadPdfToDrive(fileName, pdfBuffer);
+          } catch(e) {
+            console.warn('Google Drive: dépôt PDF échoué pour facture', invoiceId, '-', e.message);
+          }
 
           if (qbProducts.length === 0) { await loadQbProducts(effectiveRealmId, token.token); }
           const deductedLines = [];
