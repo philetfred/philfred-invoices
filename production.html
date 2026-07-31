@@ -74,7 +74,7 @@
 
     <div class="field">
       <label>Produit</label>
-      <select id="product-select">
+      <select id="product-select" onchange="onProductChange()">
         <option value="">— Choisir un produit —</option>
         <option>CAISSE 12x BAMBINO TOUTE GARNIE</option>
         <option>CAISSE 8X MARGHERITA</option>
@@ -87,6 +87,10 @@
         <option>PFPIZZ-VEGE</option>
         <option>PFPIZZA-MARG</option>
         <option>PFPIZZFRO</option>
+        <option>Pizza Bambino fromage</option>
+        <option>Pizza Bambino pepperoni</option>
+        <option>Pizza Bambino Toute Garnie</option>
+        <option>Pizza Bambino Végétarienne</option>
       </select>
     </div>
 
@@ -121,15 +125,26 @@
 
 <script>
 let currentTab = 'add';
+let unitsByProduct = {}; // rempli depuis /api/inventory
 
 function switchTab(tab) {
   currentTab = tab;
   document.getElementById('tab-add').className = 'tab-btn' + (tab === 'add' ? ' active' : '');
   document.getElementById('tab-remove').className = 'tab-btn' + (tab === 'remove' ? ' active' : '');
-  document.getElementById('qty-label').textContent = tab === 'add' ? 'Nombre de caisses produites' : 'Nombre de caisses à retirer';
-  document.getElementById('btn-label').textContent = tab === 'add' ? 'Ajouter au stock' : 'Retirer du stock';
+  updateQtyLabel();
   document.getElementById('success-box').classList.remove('visible');
 }
+
+function unitLabel(unit) { return unit === 'cs' ? 'caisses' : (unit || 'unité') + 's'; }
+
+function updateQtyLabel() {
+  const name = document.getElementById('product-select').value;
+  const unit = unitsByProduct[name] || 'cs';
+  const verb = currentTab === 'add' ? 'produites' : 'à retirer';
+  document.getElementById('qty-label').textContent = 'Nombre de ' + unitLabel(unit) + ' ' + verb;
+}
+
+function onProductChange() { updateQtyLabel(); }
 
 async function submitEntry() {
   const name = document.getElementById('product-select').value;
@@ -156,6 +171,7 @@ async function submitEntry() {
       document.getElementById('note-input').value = '';
       document.getElementById('success-box').classList.add('visible');
       setTimeout(() => document.getElementById('success-box').classList.remove('visible'), 3000);
+      updateQtyLabel();
       await loadLog();
     } else {
       alert('Erreur : ' + (data.error || 'Inconnue'));
@@ -178,12 +194,13 @@ async function loadLog() {
     log.slice(0, 30).forEach(entry => {
       const date = new Date(entry.createdAt).toLocaleDateString('fr-CA', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
       const qtyClass = entry.qty > 0 ? 'qty-pos' : 'qty-neg';
-      const qtyStr = entry.qty > 0 ? '+' + entry.qty : '' + entry.qty;
+      const unit = unitsByProduct[entry.name] || 'cs';
+      const qtyStr = (entry.qty > 0 ? '+' + entry.qty : '' + entry.qty) + ' ' + unit;
       const typeLabel = entry.type === 'production' ? '📦 Production' : '📤 Retrait';
       rows += '<tr>' +
         '<td>' + date + '</td>' +
         '<td style="font-weight:500;">' + entry.name + '</td>' +
-        '<td class="' + qtyClass + '">' + qtyStr + ' cs</td>' +
+        '<td class="' + qtyClass + '">' + qtyStr + '</td>' +
         '<td style="color:#888;">' + typeLabel + '</td>' +
         '<td style="color:#aaa;font-size:12px;">' + (entry.note || '') + '</td>' +
         '<td style="color:#aaa;font-size:12px;">' + (entry.createdBy || '') + '</td>' +
@@ -198,11 +215,21 @@ async function loadLog() {
   }
 }
 
+async function loadUnits() {
+  try {
+    const res = await fetch('/api/inventory');
+    const items = await res.json();
+    items.forEach(i => { unitsByProduct[i.name] = i.unit || 'cs'; });
+  } catch(e) {}
+}
+
 async function init() {
   const res = await fetch('/api/app-status');
   const data = await res.json();
   if (!data.loggedIn) { window.location.href = '/login'; return; }
   document.getElementById('date-input').value = new Date().toISOString().split('T')[0];
+  await loadUnits();
+  updateQtyLabel();
   await loadLog();
 }
 
