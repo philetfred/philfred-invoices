@@ -283,7 +283,7 @@ async function handleFile(file) {
 
 // ── Build preview from parsed data ────────────────────────────────────────
 function buildPreview(parsed) {
-  // PO number → note and ref
+  // PO number → note et ref
   if (parsed.po_number) {
     document.getElementById('po-number').value = parsed.po_number;
     document.getElementById('note').value = `Bon de commande #${parsed.po_number}`;
@@ -405,6 +405,7 @@ async function createInvoice() {
   if (!clientId) { alert('Sélectionne un client (Pasquier St-Jean ou Delson).'); return; }
 
   const lines = [];
+  const registerLines = []; // Pour enregistrer dans l'onglet "Factures"
   let valid = true;
   document.querySelectorAll('.item-row').forEach(row => {
     const sel = row.querySelector('.product-select');
@@ -418,6 +419,11 @@ async function createInvoice() {
       Amount: parseFloat((qty * price).toFixed(2)),
       DetailType: 'SalesItemLineDetail',
       SalesItemLineDetail: lineDetail
+    });
+    registerLines.push({
+      itemId: sel.value,
+      itemName: sel.options[sel.selectedIndex]?.text || '',
+      qty, unitPrice: price, taxCode
     });
   });
 
@@ -449,6 +455,21 @@ async function createInvoice() {
       document.getElementById('qb-link').href = `https://app.qbo.intuit.com/app/invoice?txnId=${data.Invoice.Id}`;
       btn.innerHTML = '<i class="ti ti-circle-check"></i> Facture créée !';
       btn.style.background = '#15803d';
+
+      // ── Enregistrer cette facture dans l'onglet "Factures" ──
+      fetch('/api/app-invoices/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          invoiceId: data.Invoice.Id,
+          docNumber: data.Invoice.DocNumber || document.getElementById('ref-num').value,
+          customerId: clientId,
+          customerName: (qbClients[clientId] || document.getElementById('client-select').selectedOptions[0]?.textContent || ''),
+          totalAmt: data.Invoice.TotalAmt,
+          txnDate: document.getElementById('invoice-date').value,
+          lines: registerLines
+        })
+      }).catch(e => console.warn('Enregistrement dans l\'onglet Factures échoué', e));
     } else {
       throw new Error(JSON.stringify(data));
     }
