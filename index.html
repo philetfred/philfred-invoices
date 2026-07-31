@@ -83,6 +83,9 @@
   .success-banner p { font-size: 14px; color: #aaa; }
   .success-banner a { color: #e63946; }
   .reconnect-btn { background: none; border: none; color: #e63946; font-size: 12px; cursor: pointer; text-decoration: underline; }
+  .google-btn { font-size: 11px; color: #4285F4; text-decoration: none; border: 1px solid #4285F4; padding: 6px 12px; border-radius: 6px; display: flex; align-items: center; gap: 5px; }
+  .google-btn:hover { background: #4285F4; color: white; }
+  .google-tag { font-size: 11px; color: #4ade80; display: flex; align-items: center; gap: 4px; }
 
   @media (max-width: 700px) {
     .items-header { grid-template-columns: 1fr 1fr 50px 80px 110px 32px; }
@@ -108,6 +111,12 @@
   <a href="/admin" style="display:none; font-size:12px; color:#888; text-decoration:none;" id="admin-btn">
     ⚙️ Admin Prix
   </a>
+  <a href="/auth-google" class="google-btn" id="google-connect-btn" style="display:none;">
+    <i class="ti ti-brand-google-drive"></i> Connecter Google Drive
+  </a>
+  <span class="google-tag" id="google-tag" style="display:none;">
+    <i class="ti ti-brand-google-drive"></i> Drive connecté
+  </span>
   <button class="reconnect-btn" id="reconnect-btn" onclick="window.location.href='/auth'" style="display:none;">
     Reconnecter QuickBooks
   </button>
@@ -211,15 +220,27 @@ async function logout() {
 
 async function checkStatus() {
   // Vérifier session app d'abord
+  let isAdmin = false;
   try {
     const appRes = await fetch('/api/app-status');
     const appData = await appRes.json();
     if (appData.loggedIn) {
       document.getElementById('user-tag').textContent = '👤 ' + appData.username;
-      // Cacher admin-btn si pas admin
-      if (appData.role !== 'admin') {
+      isAdmin = appData.role === 'admin';
+      if (!isAdmin) {
         document.getElementById('admin-btn').style.display = 'none';
       }
+    }
+  } catch(e) {}
+
+  // Statut Google Drive (bouton visible seulement pour les admins non connectés)
+  try {
+    const gRes = await fetch('/api/google-status');
+    const gData = await gRes.json();
+    if (gData.connected) {
+      document.getElementById('google-tag').style.display = 'flex';
+    } else if (isAdmin) {
+      document.getElementById('google-connect-btn').style.display = 'flex';
     }
   } catch(e) {}
 
@@ -231,7 +252,7 @@ async function checkStatus() {
     if (data.connected) { showInvoice(); loadProducts(); }
     else { showConnect(); }
   } catch(e) { showConnect(); }
-  if (params.get('connected')) window.history.replaceState({}, '', '/');
+  if (params.get('connected') || params.get('googleConnected')) window.history.replaceState({}, '', '/');
 }
 
 function showConnect() {
@@ -558,7 +579,8 @@ async function createInvoice() {
       // Note: l'inventaire n'est PAS déduit ici. Le webhook QuickBooks
       // (côté serveur) s'en charge automatiquement dès que la facture est
       // détectée dans QuickBooks — c'est la seule source de vérité pour
-      // éviter une double déduction (une fois ici, une fois par le webhook).
+      // éviter une double déduction. C'est aussi lui qui dépose le PDF
+      // de la facture dans Google Drive automatiquement (si connecté).
 
       // ── Enregistrer cette facture dans l'onglet "Factures" ──
       fetch('/api/app-invoices/add', {
