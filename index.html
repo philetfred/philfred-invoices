@@ -8,12 +8,16 @@
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f5; min-height: 100vh; }
-  .header { background: #1a1a1a; color: white; padding: 16px 24px; display: flex; align-items: center; gap: 16px; }
+  .header { background: #1a1a1a; color: white; padding: 16px 24px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
   .logo-text { font-size: 22px; font-weight: 500; }
   .logo-text span { color: #e63946; }
   .sub { font-size: 11px; color: #888; letter-spacing: 2px; text-transform: uppercase; }
   .tag { font-size: 11px; padding: 3px 10px; border-radius: 20px; background: #333; color: #aaa; margin-left: auto; }
   .tag.connected { background: #14532d; color: #4ade80; }
+  .nav-links { display: flex; gap: 8px; flex-wrap: wrap; }
+  .nav-btn { background: none; border: 1px solid #444; color: #ccc; padding: 7px 13px; border-radius: 8px; cursor: pointer; font-size: 13px; text-decoration: none; display: flex; align-items: center; gap: 5px; }
+  .nav-btn:hover { background: #333; color: white; }
+  .nav-btn.active { background: #e63946; border-color: #e63946; color: white; }
   .container { max-width: 960px; margin: 32px auto; padding: 0 16px; }
   .card { background: white; border-radius: 12px; border: 1px solid #e5e5e5; padding: 24px; margin-bottom: 20px; }
   .section-title { font-size: 11px; font-weight: 500; color: #888; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
@@ -94,23 +98,21 @@
     <div class="sub">Pizzeria · Facturation</div>
   </div>
   <span class="tag" id="conn-tag">Vérification...</span>
-  <a href="/admin" style="display:none; margin-left:12px; font-size:12px; color:#888; text-decoration:none;" id="admin-btn">
+  <div class="nav-links">
+    <a href="/" class="nav-btn active"><i class="ti ti-file-invoice"></i> Facturation</a>
+    <a href="/factures" class="nav-btn"><i class="ti ti-receipt"></i> Factures</a>
+    <a href="/inventaire" class="nav-btn"><i class="ti ti-box"></i> Inventaire</a>
+    <a href="/production" class="nav-btn"><i class="ti ti-plus"></i> Production</a>
+    <a href="/planning" class="nav-btn"><i class="ti ti-calendar"></i> Planning</a>
+  </div>
+  <a href="/admin" style="display:none; font-size:12px; color:#888; text-decoration:none;" id="admin-btn">
     ⚙️ Admin Prix
   </a>
-  <a href="/inventaire" style="margin-left:8px; font-size:12px; color:#aaa; text-decoration:none; border:1px solid #444; padding:6px 12px; border-radius:6px;">
-    📦 Inventaire
-  </a>
-  <a href="/production" style="margin-left:4px; font-size:12px; color:#aaa; text-decoration:none; border:1px solid #444; padding:6px 12px; border-radius:6px;">
-    ➕ Production
-  </a>
-  <a href="/planning" style="margin-left:4px; font-size:12px; color:#aaa; text-decoration:none; border:1px solid #444; padding:6px 12px; border-radius:6px;">
-    📅 Planning
-  </a>
-  <button class="reconnect-btn" id="reconnect-btn" onclick="window.location.href='/auth'" style="display:none; margin-left:8px;">
+  <button class="reconnect-btn" id="reconnect-btn" onclick="window.location.href='/auth'" style="display:none;">
     Reconnecter QuickBooks
   </button>
-  <span id="user-tag" style="margin-left:12px; font-size:12px; color:#aaa;"></span>
-  <button onclick="logout()" style="margin-left:8px; background:none; border:1px solid #444; color:#aaa; padding:6px 12px; border-radius:6px; font-size:12px; cursor:pointer;">
+  <span id="user-tag" style="font-size:12px; color:#aaa;"></span>
+  <button onclick="logout()" style="background:none; border:1px solid #444; color:#aaa; padding:6px 12px; border-radius:6px; font-size:12px; cursor:pointer;">
     Déconnexion
   </button>
 </div>
@@ -495,6 +497,7 @@ function fmt(n) { return n.toLocaleString('fr-CA', { style:'currency', currency:
 async function createInvoice() {
   if (!selectedClient) { alert('Sélectionne un client d\'abord.'); return; }
   const lines = [];
+  const registerLines = []; // Pour enregistrer dans l'onglet "Factures"
   let valid = true;
   document.querySelectorAll('.item-row').forEach(row => {
     const sel = row.querySelector('.product-select');
@@ -518,6 +521,11 @@ async function createInvoice() {
     };
     if (desc) lineObj.Description = desc;
     lines.push(lineObj);
+    registerLines.push({
+      itemId: sel.value,
+      itemName: sel.options[sel.selectedIndex]?.text || '',
+      qty, unitPrice: price, taxCode, description: desc
+    });
   });
   if (!valid || !lines.length) { alert('Ajoute au moins un produit valide.'); return; }
 
@@ -551,6 +559,21 @@ async function createInvoice() {
       // (côté serveur) s'en charge automatiquement dès que la facture est
       // détectée dans QuickBooks — c'est la seule source de vérité pour
       // éviter une double déduction (une fois ici, une fois par le webhook).
+
+      // ── Enregistrer cette facture dans l'onglet "Factures" ──
+      fetch('/api/app-invoices/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          invoiceId: data.Invoice.Id,
+          docNumber: data.Invoice.DocNumber || document.getElementById('ref-num').value,
+          customerId: selectedClient.id,
+          customerName: selectedClient.name,
+          totalAmt: data.Invoice.TotalAmt,
+          txnDate: document.getElementById('invoice-date').value,
+          lines: registerLines
+        })
+      }).catch(e => console.warn('Enregistrement dans l\'onglet Factures échoué', e));
     } else {
       throw new Error(JSON.stringify(data));
     }
