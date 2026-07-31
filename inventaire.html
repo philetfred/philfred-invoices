@@ -97,6 +97,13 @@ async function init() {
   await loadInventory();
 }
 
+// Pluralise proprement une unité ("cs" reste "cs", "unité" -> "unités" si > 1)
+function unitLabel(unit, qty) {
+  if (unit === 'cs') return 'cs';
+  const n = Math.abs(qty);
+  return n > 1 ? unit + 's' : unit;
+}
+
 async function loadInventory() {
   try {
     const res = await fetch('/api/inventory');
@@ -112,6 +119,7 @@ async function loadInventory() {
     // Table
     let rows = '';
     items.forEach(item => {
+      const unit = item.unit || 'cs';
       let statusClass, badgeHtml;
       if (item.stock <= 0) {
         statusClass = 'stock-critical';
@@ -126,11 +134,11 @@ async function loadInventory() {
 
       const thresholdCell = isAdmin
         ? '<td><input type="number" class="threshold-input" value="' + item.threshold + '" id="th-' + encodeURIComponent(item.name) + '" min="0" /> <button class="save-btn" onclick="saveThreshold(\'' + encodeURIComponent(item.name) + '\')">Sauver</button></td>'
-        : '<td style="color:#aaa;font-size:13px;">' + item.threshold + ' cs</td>';
+        : '<td style="color:#aaa;font-size:13px;">' + item.threshold + ' ' + unitLabel(unit, item.threshold) + '</td>';
 
       rows += '<tr>' +
         '<td style="font-weight:500;">' + item.name + '</td>' +
-        '<td><span class="stock-num ' + statusClass + '">' + item.stock + '</span> <span style="font-size:12px;color:#aaa;">cs</span></td>' +
+        '<td><span class="stock-num ' + statusClass + '">' + item.stock + '</span> <span style="font-size:12px;color:#aaa;">' + unitLabel(unit, item.stock) + '</span></td>' +
         '<td>' + badgeHtml + '</td>' +
         thresholdCell +
         '</tr>';
